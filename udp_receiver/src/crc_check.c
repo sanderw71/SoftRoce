@@ -1,4 +1,4 @@
-s#include <stdio.h>
+#include <stdio.h>
 #include <stdint.h>
 
 int crc32_table[256];
