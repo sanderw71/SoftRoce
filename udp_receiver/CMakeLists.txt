@@ -30,5 +30,5 @@ include_directories("${PROJECT_SOURCE_DIR}" "/home/atr/local/include/")
 
 add_executable(udp_client ${PROJECT_SOURCE_DIR}/udp_client.c ${PROJECT_SOURCE_DIR}/udp_client.c)
 add_executable(udp_server ${PROJECT_SOURCE_DIR}/udp_server.c ${PROJECT_SOURCE_DIR}/udp_server.c)
-add_executable(crc_check ${PROJECT_SOURCE_DIR}/crc_check.c ${PROJECT_SOURCE_DIR}/crc_check.c)
+add_executable(crc_check  ${PROJECT_SOURCE_DIR}/crc_check.c ${PROJECT_SOURCE_DIR}/crc_check.c)
 
