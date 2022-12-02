@@ -1,0 +1,22 @@
+[
+{
+  "directory": "/home/sander/RoceGit/SoftRoce/build",
+  "command": "/usr/bin/gcc -I/home/sander/RoceGit/SoftRoce/udp_receiver/src -I/home/atr/local/include -g -g -o CMakeFiles/udp_client.dir/src/udp_client.o -c /home/sander/RoceGit/SoftRoce/udp_receiver/src/udp_client.c",
+  "file": "/home/sander/RoceGit/SoftRoce/udp_receiver/src/udp_client.c"
+},
+{
+  "directory": "/home/sander/RoceGit/SoftRoce/build",
+  "command": "/usr/bin/gcc -I/home/sander/RoceGit/SoftRoce/udp_receiver/src -I/home/atr/local/include -g -g -o CMakeFiles/udp_server.dir/src/udp_server.o -c /home/sander/RoceGit/SoftRoce/udp_receiver/src/udp_server.c",
+  "file": "/home/sander/RoceGit/SoftRoce/udp_receiver/src/udp_server.c"
+},
+{
+  "directory": "/home/sander/RoceGit/SoftRoce/build",
+  "command": "/usr/bin/gcc -I/home/sander/RoceGit/SoftRoce/udp_receiver/src -I/home/atr/local/include -g -g -o CMakeFiles/udp_server.dir/src/crc_check.o -c /home/sander/RoceGit/SoftRoce/udp_receiver/src/crc_check.c",
+  "file": "/home/sander/RoceGit/SoftRoce/udp_receiver/src/crc_check.c"
+},
+{
+  "directory": "/home/sander/RoceGit/SoftRoce/build",
+  "command": "/usr/bin/gcc -I/home/sander/RoceGit/SoftRoce/udp_receiver/src -I/home/atr/local/include -g -g -o CMakeFiles/udp_server.dir/src/crc32.o -c /home/sander/RoceGit/SoftRoce/udp_receiver/src/crc32.c",
+  "file": "/home/sander/RoceGit/SoftRoce/udp_receiver/src/crc32.c"
+}
+]

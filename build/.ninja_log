@@ -1,0 +1,21 @@
+# ninja log v5
+0	39	1670011585124306560	CMakeFiles/udp_server.dir/src/crc_check.o	50b6dd8d154e082e
+0	40	1670011585124306560	CMakeFiles/udp_server.dir/src/crc32.o	aa4a458ab2b95488
+0	40	1670011585124306560	CMakeFiles/udp_client.dir/src/udp_client.o	368c4badddf0bc00
+0	66	1670011585152306937	CMakeFiles/udp_server.dir/src/udp_server.o	3852b560c5418029
+41	68	1670011585156306992	/home/sander/RoceGit/SoftRoce/udp_receiver/bin/udp_client	e32a37fd20316704
+67	93	1670011585180307315	/home/sander/RoceGit/SoftRoce/udp_receiver/bin/udp_server	d536f64fdecb1d6
+1	55	1670012319560125186	CMakeFiles/udp_server.dir/src/udp_server.o	3852b560c5418029
+55	95	1670012319596125010	/home/sander/RoceGit/SoftRoce/udp_receiver/bin/udp_server	d536f64fdecb1d6
+1	66	1670012413935642669	CMakeFiles/udp_server.dir/src/udp_server.o	3852b560c5418029
+66	91	1670012413959642542	/home/sander/RoceGit/SoftRoce/udp_receiver/bin/udp_server	d536f64fdecb1d6
+1	51	1670012653671575205	CMakeFiles/udp_server.dir/src/udp_server.o	3852b560c5418029
+51	73	1670012653695575492	/home/sander/RoceGit/SoftRoce/udp_receiver/bin/udp_server	d536f64fdecb1d6
+0	61	1670013110817682558	CMakeFiles/udp_server.dir/src/udp_server.o	3852b560c5418029
+62	92	1670013110849682574	/home/sander/RoceGit/SoftRoce/udp_receiver/bin/udp_server	d536f64fdecb1d6
+1	54	1670013183805697637	CMakeFiles/udp_server.dir/src/udp_server.o	3852b560c5418029
+54	75	1670013183825697635	/home/sander/RoceGit/SoftRoce/udp_receiver/bin/udp_server	d536f64fdecb1d6
+0	53	1670013363189598744	CMakeFiles/udp_server.dir/src/udp_server.o	3852b560c5418029
+53	77	1670013363213598722	/home/sander/RoceGit/SoftRoce/udp_receiver/bin/udp_server	d536f64fdecb1d6
+1	58	1670013474817629933	CMakeFiles/udp_server.dir/src/udp_server.o	3852b560c5418029
+58	84	1670013474841630527	/home/sander/RoceGit/SoftRoce/udp_receiver/bin/udp_server	d536f64fdecb1d6

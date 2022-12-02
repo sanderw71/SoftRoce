@@ -9,14 +9,34 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <sys/socket.h>
+#include <linux/if_packet.h>
+#include <net/ethernet.h> /* the L2 protocols */
+#include <netinet/udp.h>  //Provides declarations for tcp header
+#include <netinet/ip.h>	  //Provides declarations for ip header
+#include "crc32.h"
 
 // ROCE Server port
 #define PORT 4791
-#define MAXLINE 1024
+#define MAXLINE 1500
+
+#define IP_HDR_SIZE 20
+#define UDP_HDR_SIZE 8
+#define HDR_SIZE IP_HDR_SIZE + UDP_HDR_SIZE
+
+void initCrc(void);
+uint32_t calc_icrc32(char *data, int len);
 
 // BTH
 uint32_t bth_psn = 0;
 uint32_t crc = 0xFFFFFFFF;
+
+struct roce_input_msg
+{
+	struct iphdr iph;
+	struct udphdr udph;
+	char payload[MAXLINE];
+} __attribute__((packed));
 
 char connect_req_packet_bytes[] = {
 	0x64, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x01,
@@ -64,18 +84,16 @@ struct ib_mad_params
 
 struct ib_rep_params_1
 {
-	uint8_t target_ack_delay : 5;
-	uint8_t failover_accepted : 2;
 	uint8_t end_to_end_flow_control : 1;
-
+	uint8_t failover_accepted : 2;
+	uint8_t target_ack_delay : 5;
 } __attribute__((packed));
 
 struct ib_rep_params_2
 {
-	uint8_t rnr_retry_count : 3;
-	uint8_t srq : 1;
 	uint8_t reserved : 4;
-
+	uint8_t srq : 1;
+	uint8_t rnr_retry_count : 3;
 } __attribute__((packed));
 
 struct ib_req_params_1
@@ -243,6 +261,7 @@ struct ib_req
 	uint64_t service_id;
 	uint64_t local_ca_guid;
 	uint32_t reserved_2;
+	uint32_t q_key;
 	struct ib_req_params_1 ib_req_params_1;
 	struct ib_req_params_2 ib_req_params_2;
 	struct ib_req_params_3 ib_req_params_3;
@@ -353,21 +372,22 @@ void ib_send_rep(char *data_in, char *data_out)
 
 	mad_out->ib_mad_params.method = mad_in->ib_mad_params.method;
 	mad_out->ib_mad_params.r = mad_in->ib_mad_params.r;
+
 	mad_out->class_version = mad_in->class_version;
 	mad_out->mgmt_class = mad_in->mgmt_class;
 	mad_out->base_version = mad_in->base_version;
 	mad_out->class_specific = mad_in->class_specific;
 	mad_out->status = mad_in->status;
 	mad_out->transaction_id = mad_in->transaction_id;
-	mad_out->attribute_id = 13;
+	mad_out->attribute_id = htons(0x13);
 	mad_out->attribute_modifier = mad_in->attribute_modifier;
 
-	rep->local_comm_id = 0x1234;
+	rep->local_comm_id = ntohl(0x1234);
 	rep->remote_comm_id = req->local_comm_id;
-	rep->local_q_key = 0x0;
+	rep->local_q_key = ntohl(0x0);
 	rep->local_qpn = req->ib_req_params_1.local_qpn;
-	rep->local_eecn = 0x0;
-	rep->starting_psn = 0xF;
+	rep->local_eecn = ntohl(0x0);
+	rep->starting_psn = ntohl(0xF);
 	rep->resp_resources = 0x1;
 	rep->initiator_depth = 0x1;
 	rep->ib_rep_params_1.target_ack_delay = 0xF;
@@ -379,6 +399,83 @@ void ib_send_rep(char *data_in, char *data_out)
 	rep->local_ca_guid = 0x02155dfffe240104;
 }
 
+int process_roce(char *buffer, int len)
+{
+	Report_ib_base_transport_header(&buffer[0]);
+	Report_ib_extended_transport_header(&buffer[sizeof(struct ib_base_transport_header) + 0]);
+	Report_ib_management_datagram_field(&buffer[sizeof(struct ib_base_transport_header) + sizeof(struct ib_datagram_extended_transport_header) + 0]);
+
+	uint32_t *ptr = (uint32_t *)&buffer[len - 4];
+	printf("\nCrc = %x\n", *ptr);
+	return 0;
+}
+
+char ExampleIPhdr[] = {
+	0x45, 0x00, 0x01, 0x34, 0xb6, 0xaf, 0x40, 0x00,
+	0x40, 0x11, 0xfe, 0xed, 0xc0, 0xa8, 0x01, 0x66,
+	0xc0, 0xa8, 0x01, 0x65};
+
+uint16_t IpHdrChecksum(struct iphdr *hdr)
+{
+	union _iphdr
+	{
+		struct iphdr hdr;
+		uint16_t data[10];
+	};
+
+	union _iphdr ip;
+
+    // Copy data into payload
+	memcpy(ip.data,hdr,20);
+
+
+	uint32_t Checksum = 0;
+
+	for (int i = 0; i < 10; i++)
+	{
+		if (i == 5)
+		{
+			continue;
+		}
+		Checksum += ip.data[i];
+	}
+
+	Checksum = (Checksum & 0xFFFF) + ((Checksum & 0xFFFF0000) >> 16);
+	Checksum = Checksum ^ 0x0000FFFF;
+
+	return (uint16_t)Checksum;
+}
+
+int process_ip(struct roce_input_msg *msg)
+{
+	printf("source addr   %x\n", ntohl(msg->iph.saddr));
+	printf("dest   addr   %x\n", ntohl(msg->iph.daddr));
+	printf("len           %d\n", ntohs(msg->iph.tot_len));
+	printf("checksum      %x\n", msg->iph.check);
+	printf("calc checksum %x\n", IpHdrChecksum(&msg->iph));
+}
+
+uint16_t Checking()
+{
+	// Check IP CRC
+	uint16_t *Crc = &ExampleIPhdr[5 * 2];
+	uint16_t CalulatedCrc = IpHdrChecksum(&ExampleIPhdr[0]);
+	if (*Crc != CalulatedCrc)
+	{
+		printf("Checksum error %x != %x\n", *Crc, CalulatedCrc);
+		return 1;
+	}
+
+	return 0;
+}
+
+// cm_t cm;
+// p_cm_t p_cm = &cm;
+
+// Report_ib_base_transport_header(&connect_req_packet_bytes[0]);
+// Report_ib_extended_transport_header(&connect_req_packet_bytes[sizeof(struct ib_base_transport_header)]);
+// Report_ib_management_datagram_field(&connect_req_packet_bytes[sizeof(struct ib_base_transport_header) + sizeof(struct ib_datagram_extended_transport_header)]);
+
 // Driver code
 int main()
 {
@@ -387,13 +484,17 @@ int main()
 	char data_out[MAXLINE];
 	char *hello = "Hello from server";
 	struct sockaddr_in servaddr, cliaddr;
+	struct roce_input_msg *roce_in = (struct roce_input_msg *)buffer;
 
-	Report_ib_base_transport_header(&connect_req_packet_bytes[0]);
-	Report_ib_extended_transport_header(&connect_req_packet_bytes[sizeof(struct ib_base_transport_header)]);
-	Report_ib_management_datagram_field(&connect_req_packet_bytes[sizeof(struct ib_base_transport_header) + sizeof(struct ib_datagram_extended_transport_header)]);
+	if (Checking() != 0) {
+		return;
+	}
 
-	// Creating socket file descriptor
-	if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+	initCrc();
+
+	//  Creating socket file descriptor
+	//if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+	if ((sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0)
 	{
 		perror("socket creation failed");
 		exit(EXIT_FAILURE);
@@ -415,30 +516,76 @@ int main()
 		exit(EXIT_FAILURE);
 	}
 
-	printf("Server listining on port  : %d\n", PORT);
+	printf("Server raw listining on port  : %d\n", PORT);
 
 	while (1 == 1)
 	{
-		int len, n;
+		int len = sizeof(cliaddr); // len is value/result
+		int n = recvfrom(sockfd, (char *)buffer, MAXLINE,
+						 MSG_WAITALL, (struct sockaddr *)&cliaddr,
+						 &len);
 
-		len = sizeof(cliaddr); // len is value/result
-		n = recvfrom(sockfd, (char *)buffer, MAXLINE,
-					 MSG_WAITALL, (struct sockaddr *)&cliaddr,
-					 &len);
+		struct iphdr *iph = (struct iphdr *)buffer;
+		struct udphdr *udph = (struct udphdr *)(buffer + sizeof(struct ip));
 
-		buffer[n] = '\0';
+		if (ntohs(udph->uh_dport) != PORT)
+		{
+			printf(".\n");
+			continue;
+		}
 
 		printf("Message received with length of : %d\n", n);
-		Report_ib_base_transport_header(&buffer[0]);
-		Report_ib_extended_transport_header(&buffer[sizeof(struct ib_base_transport_header)]);
-		Report_ib_management_datagram_field(&buffer[sizeof(struct ib_base_transport_header) + sizeof(struct ib_datagram_extended_transport_header)]);
+		printf("port        %d\n", ntohs(roce_in->udph.uh_dport));
+		printf("source addr %x\n", ntohl(roce_in->iph.saddr));
+		printf("dest   addr %x\n", ntohl(roce_in->iph.daddr));
+		printf("len         %d\n", ntohs(roce_in->iph.tot_len));
 
-		ib_send_rep(buffer, data_out);
+#ifdef raw
+		printf("\nIP header: ");
+		for (int i = 0; i < 20; i++)
+		{
+			printf("%2X ", (unsigned char)buffer[i]);
+		}
+		printf("\nUDP header: ");
+		for (int i = 20; i < 20 + 8; i++)
+		{
+			printf("%2X ", (unsigned char)buffer[i]);
+		}
+#endif
 
-		sendto(sockfd, data_out, 280,
-			   MSG_CONFIRM, (const struct sockaddr *)&cliaddr,
-			   len);
-		printf("Waiting for next message.\n");
+		int header = 28;
+		process_ip(&buffer);
+		process_roce(&buffer[header], len - 28);
+
+		uint32_t src_addr = roce_in->iph.daddr;
+		uint32_t dst_addr = roce_in->iph.saddr;
+
+		ib_send_rep(&buffer[28], data_out);
+		memcpy(&buffer[28], data_out, 280);
+
+		roce_in->iph.saddr = src_addr;
+		roce_in->iph.daddr = dst_addr;
+
+		uint32_t src_port = roce_in->udph.uh_dport;
+		uint32_t dst_port = roce_in->udph.uh_sport;
+		// roce_in->udph.uh_sport = dst_port;
+		// roce_in->udph.uh_dport = src_port;
+		roce_in->udph.check = 0;
+		roce_in->iph.protocol = 0x11;
+
+		for (int i = 0; i < 280 + HDR_SIZE; i++)
+		{
+			printf("%.2x ", (unsigned char)buffer[i]);
+		}
+
+		// Add crc
+		uint32_t crc = calc_icrc32(buffer, n);
+		uint32_t *ptr = (uint32_t *)&buffer[n - 4];
+		*ptr = crc;
+
+		sendto(sockfd, buffer, 280 + HDR_SIZE - 20, MSG_CONFIRM, (const struct sockaddr *)&cliaddr, len);
+
+		printf("\nWaiting for next message.\n");
 	}
 	return 0;
 }
