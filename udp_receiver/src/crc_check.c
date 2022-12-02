@@ -5,7 +5,7 @@
 #include "crc32.h"
 #include <linux/kernel.h>
 
-char connect_request[] = {
+unsigned char connect_request[] = {
   0x00, 0x15, 0x5d, 0x24, 0x01, 0x04, 0x00, 0x15,
   0x5d, 0x01, 0x02, 0x0d, 0x08, 0x00, 0x45, 0x00,
   0x01, 0x34, 0xb6, 0xaf, 0x40, 0x00, 0x40, 0x11,
@@ -65,19 +65,6 @@ char rc_send_only[] = {
 cm_t cm;
 p_cm_t p_cm = &cm;
 
-void initCrc(void)
-{
-  memset(p_cm, 0, sizeof(cm));
-
-  p_cm->cm_width = 32;
-  p_cm->cm_poly = 0x04C11DB7;
-  p_cm->cm_init = 0xFFFFFFFF;
-  p_cm->cm_refin = 1;
-  p_cm->cm_refot = 1;
-  p_cm->cm_xorot = 0xFFFFFFFF;
-  cm_ini(p_cm);
-}
-
 uint32_t be32_to_le32(uint32_t value) 
 {
     return (((value >> 24)  &0x000000ff) | // move byte 3 to byte 0
@@ -93,6 +80,8 @@ uint32_t calc_icrc32(char *data, int len)
   int l;
   char pseudo_lrh[] = {
     0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+
+  cm_ini(p_cm);
 
   // Create an array that concatenates input array with pseaudo LRH header of 8x 0xFF
 
@@ -121,8 +110,7 @@ uint32_t calc_icrc32(char *data, int len)
 
   int16_t max = sizeof(icrc_array);
 
-  uint16_t j = 0;
-  for (j = 0; j < max; j += 1)
+  for (uint16_t j = 0; j < max; j += 1)
   {
     cm_nxt(p_cm, icrc_array[j]); 
   }
@@ -134,4 +122,29 @@ uint32_t calc_icrc32(char *data, int len)
 }
 
 
+int Crc_Checking(void)
+{
+  uint32_t icrc;
+
+  icrc = calc_icrc32(connect_request, sizeof(connect_request));
+  printf("icrc = %x\n", icrc);
+
+  icrc = calc_icrc32(rc_send_only, sizeof(rc_send_only));
+  printf("icrc = %x\n", icrc);
+}
+
+void initCrc(void)
+{
+  memset(p_cm, 0, sizeof(cm));
+
+  p_cm->cm_width = 32;
+  p_cm->cm_poly = 0x04C11DB7;
+  p_cm->cm_init = 0xFFFFFFFF;
+  p_cm->cm_refin = 1;
+  p_cm->cm_refot = 1;
+  p_cm->cm_xorot = 0xFFFFFFFF;
+  cm_ini(p_cm);
+
+  Crc_Checking();
+}
 

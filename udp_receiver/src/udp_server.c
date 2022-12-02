@@ -15,6 +15,9 @@
 #include <netinet/udp.h>  //Provides declarations for tcp header
 #include <netinet/ip.h>	  //Provides declarations for ip header
 #include "crc32.h"
+#include "ib.h"
+
+#include "ref_packets.h"
 
 // ROCE Server port
 #define PORT 4791
@@ -36,253 +39,6 @@ struct roce_input_msg
 	struct iphdr iph;
 	struct udphdr udph;
 	char payload[MAXLINE];
-} __attribute__((packed));
-
-char connect_req_packet_bytes[] = {
-	0x64, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x01,
-	0x80, 0x00, 0x00, 0x0c, 0x80, 0x01, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x01, 0x01, 0x07, 0x02, 0x03,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
-	0xd5, 0x67, 0x2a, 0x51, 0x00, 0x10, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x51, 0x2a, 0x67, 0xd5,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x01, 0x06, 0x1c, 0x06, 0x02, 0x15, 0x5d, 0xff,
-	0xfe, 0x01, 0x02, 0x0d, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11, 0x01,
-	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0xa0,
-	0xd6, 0x36, 0x75, 0xa7, 0xff, 0xff, 0x37, 0xf0,
-	0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff,
-	0xc0, 0xa8, 0x01, 0x66, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff,
-	0xc0, 0xa8, 0x01, 0x65, 0x14, 0xa6, 0x40, 0x00,
-	0x00, 0x40, 0x00, 0x98, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x40, 0x8d, 0xe2, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0xc0, 0xa8, 0x01, 0x66, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0xc0, 0xa8, 0x01, 0x65, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	0x00, 0x00, 0x00, 0x00, 0xbf, 0x0a, 0x9d, 0xe4};
-
-struct ib_mad_params
-{
-	uint8_t method : 7;
-	uint8_t r : 1;
-
-} __attribute__((packed));
-
-struct ib_rep_params_1
-{
-	uint8_t end_to_end_flow_control : 1;
-	uint8_t failover_accepted : 2;
-	uint8_t target_ack_delay : 5;
-} __attribute__((packed));
-
-struct ib_rep_params_2
-{
-	uint8_t reserved : 4;
-	uint8_t srq : 1;
-	uint8_t rnr_retry_count : 3;
-} __attribute__((packed));
-
-struct ib_req_params_1
-{
-	uint32_t local_qpn : 24;
-	uint32_t resp_resources : 8;
-} __attribute__((packed));
-
-struct ib_req_params_2
-{
-	uint32_t local_eecn : 24;
-	uint32_t initiator_depth : 8;
-} __attribute__((packed));
-
-struct ib_req_params_3
-{
-	uint32_t remote_eecn : 24;
-	uint32_t remote_cm_response_timeout : 5;
-	uint32_t transport_service_tyoe : 2;
-	uint32_t end_to_end_flow_control : 1;
-} __attribute__((packed));
-
-struct ib_req_params_4
-{
-	uint32_t starting_psn : 24;
-	uint32_t local_cm_response_timeout : 5;
-	uint32_t retry_count : 3;
-} __attribute__((packed));
-
-struct ib_req_params_5
-{
-	uint32_t partition_key : 16;
-	uint32_t path_packet_payload_mtu : 4;
-	uint32_t rdc_exists : 1;
-	uint32_t rnr_retry_count : 3;
-	uint32_t max_cm_retries : 4;
-	uint32_t srq : 1;
-	uint32_t reserved : 3;
-} __attribute__((packed));
-
-struct ib_req_params_6
-{
-	uint32_t primary_flow_label : 20;
-	uint32_t reserved : 6;
-	uint32_t primary_packet_rate : 6;
-} __attribute__((packed));
-
-struct ib_req_params_7
-{
-	uint32_t primary_traffic_class : 8;
-	uint32_t primary_hop_limit : 8;
-	uint32_t primary_sl : 4;
-	uint32_t primary_subnet_local : 1;
-	uint32_t reserved_1 : 3;
-	uint32_t primary_local_ack_timeout : 5;
-	uint32_t reserved_2 : 3;
-} __attribute__((packed));
-
-struct ib_req_params_8
-{
-	uint32_t alternate_flow_label : 20;
-	uint32_t reserved : 6;
-	uint32_t alternate_packet_rate : 6;
-} __attribute__((packed));
-
-struct ib_req_params_9
-{
-	uint32_t alternate_traffic_class : 8;
-	uint32_t alternate_hop_limit : 8;
-	uint32_t alternate_sl : 4;
-	uint32_t alternate_subnet_local : 1;
-	uint32_t reserved_1 : 3;
-	uint32_t primary_local_ack_timeout : 5;
-	uint32_t reserved_2 : 3;
-} __attribute__((packed));
-
-/** An Infiniband Base Transport Header */
-struct ib_base_transport_header
-{
-	/* Opcode */
-	uint8_t opcode;
-	/* Transport header version, pad count, migration and solicitation */
-	uint8_t se__m__padcnt__tver;
-	/* Partition key */
-	uint16_t pkey;
-	/* Destination queue pair */
-	uint32_t dest_qp;
-	/* Packet sequence number and acknowledge request */
-	uint32_t ack__psn;
-} __attribute__((packed));
-
-/* An Infiniband Datagram Extended Transport Header */
-struct ib_datagram_extended_transport_header
-{
-	/* Queue key */
-	uint32_t qkey;
-	/* Source queue pair */
-	uint32_t src_qp;
-} __attribute__((packed));
-
-/** An Infiniband Management Datagram Field (MAD) */
-struct ib_management_datagram_field
-{
-	/* Version of MAD base format. */
-	uint8_t base_version;
-	/* Class of operation. */
-	uint8_t mgmt_class;
-	/* Version of MAD class-specific format, shall be 1 unless otherwise specified. */
-	uint8_t class_version;
-	/* [7] Response bit (r), should be 1 for a response message. */
-	/* [0:6] Method to perform based on the management class. */
-	struct ib_mad_params ib_mad_params;
-	// uint8_t test;
-	/* Code indicating status of operation. */
-	uint16_t status;
-	/* This field is reserved for the Subnet Management class. */
-	uint16_t class_specific;
-	/* Transaction identifier, set to 0 if field is unused by management class. */
-	uint64_t transaction_id;
-	/* [31:16] Defines objects being operated on by a management class, set to 0 if unused. */
-	/* [15:0] Reserved */
-	uint32_t attribute_id;
-	/* Provides further scope to the attributes. Usage is determined by the managment class and attribute. Set field to 0 if it is not used by the management class and attribute. */
-	uint32_t attribute_modifier;
-} __attribute__((packed));
-
-/** An Infiniband Reply to Request message (REP) */
-struct ib_rep
-{
-	/* Identifier that uniquely identifies this connection from the sender's point of view. */
-	uint32_t local_comm_id;
-	/* An identifier that uniquely indentifies this connection from the recipient's point of view. */
-	uint32_t remote_comm_id;
-	/* The Q_key for the QP specified by the local QPN. */
-	uint32_t local_q_key;
-	/* [31:8] The QPN of the message sender's QP on which the channel is to be established. */
-	/* [7:0]  Reserved */
-	uint32_t local_qpn;
-	/* [31:8] The EE Context Number for the message sender's end of the RD channel. */
-	/* [7:0]  Reserved */
-	uint32_t local_eecn;
-	/* [7:0] The transport packet sequence number at which the remote node shall begin transmitting. */
-	/* [7:0] Reserved */
-	uint32_t starting_psn;
-	/* The maximum number of outstanding RDMA read/atomic operations the sender will support from the remote QP/EEC. Value may be zero. */
-	uint8_t resp_resources;
-	/* The maximum number of outstanding RDMA read/atomic operations the sender will have to the remote QP/EEC. Value may be zero. Number should not exceed the Responder Resources given in REQ. */
-	uint8_t initiator_depth;
-	/* [7:3] Tarcket ACK delay, maximum expected time interval between target CA's reception of a message and the transmission of the associated ACK or NAK. */
-	/* [2:1] Failover accepted, indicates whether the target of the REQ accepted or rejected the Alternate port address contained in the REQ. By send the REP, the target accepts the connection request, but it may still reject the proposed failover port. */
-	/* [0] End-to-End flow control, signifies whether the local CA acutally implements End-to-End flow control. */
-	struct ib_rep_params_1 ib_rep_params_1;
-	/* [7:5] The total number of times that the REQ or REP send while the receiver to retry RNR NAK errors before posting a completion error. */
-	/* [4] SRQ, should be 1 if SRQ exists. */
-	/* [3:0] Reserved */
-	struct ib_rep_params_2 ib_rep_params_2;
-	uint64_t local_ca_guid;
-} __attribute__((packed));
-
-/** An Infiniband Request message (REQ) */
-struct ib_req
-{
-	uint32_t local_comm_id;
-	uint32_t reserved_1;
-	uint64_t service_id;
-	uint64_t local_ca_guid;
-	uint32_t reserved_2;
-	uint32_t q_key;
-	struct ib_req_params_1 ib_req_params_1;
-	struct ib_req_params_2 ib_req_params_2;
-	struct ib_req_params_3 ib_req_params_3;
-	struct ib_req_params_4 ib_req_params_4;
-	struct ib_req_params_5 ib_req_params_5;
-	uint16_t primary_local_port_lid;
-	uint16_t primary_remote_port_lid;
-	uint64_t primary_local_port_gid_1;
-	uint64_t primary_local_port_gid_2;
-	uint64_t primary_remote_port_gid_1;
-	uint64_t primary_remote_port_gid_2;
-	struct ib_req_params_6 ib_req_params_6;
-	struct ib_req_params_7 ib_req_params_7;
-	uint16_t alternate_local_port_lid;
-	uint16_t alternate_remote_port_lid;
-	uint64_t alternate_local_port_gid_1;
-	uint64_t alternate_local_port_gid_2;
-	uint64_t alternate_remote_port_gid_1;
-	uint64_t alternate_remote_port_gid_2;
-	struct ib_req_params_8 ib_req_params_8;
-	struct ib_req_params_9 ib_req_params_9;
 } __attribute__((packed));
 
 void Report_ib_base_transport_header(char *_data)
@@ -410,11 +166,6 @@ int process_roce(char *buffer, int len)
 	return 0;
 }
 
-char ExampleIPhdr[] = {
-	0x45, 0x00, 0x01, 0x34, 0xb6, 0xaf, 0x40, 0x00,
-	0x40, 0x11, 0xfe, 0xed, 0xc0, 0xa8, 0x01, 0x66,
-	0xc0, 0xa8, 0x01, 0x65};
-
 uint16_t IpHdrChecksum(struct iphdr *hdr)
 {
 	union _iphdr
@@ -425,9 +176,8 @@ uint16_t IpHdrChecksum(struct iphdr *hdr)
 
 	union _iphdr ip;
 
-    // Copy data into payload
-	memcpy(ip.data,hdr,20);
-
+	// Copy data into payload
+	memcpy(ip.data, hdr, 20);
 
 	uint32_t Checksum = 0;
 
@@ -455,22 +205,75 @@ int process_ip(struct roce_input_msg *msg)
 	printf("calc checksum %x\n", IpHdrChecksum(&msg->iph));
 }
 
-uint16_t Checking()
+/// @brief Check IP Header calculation function
+/// @return
+uint16_t IpHdrCheck()
 {
+	uint16_t ReferenceCrc, CalulatedCrc;
+
 	// Check IP CRC
-	uint16_t *Crc = &ExampleIPhdr[5 * 2];
-	uint16_t CalulatedCrc = IpHdrChecksum(&ExampleIPhdr[0]);
-	if (*Crc != CalulatedCrc)
+	ReferenceCrc = (ExampleIPhdr[10] + (ExampleIPhdr[11] << 8));
+	CalulatedCrc = IpHdrChecksum((struct iphdr *)&ExampleIPhdr[0]);
+	if (ReferenceCrc != CalulatedCrc)
 	{
-		printf("Checksum error %x != %x\n", *Crc, CalulatedCrc);
+		printf("1: Checksum error ref %x != %x\n", ReferenceCrc, CalulatedCrc);
+		return 1;
+	}
+
+	ReferenceCrc = (connect_req_packet_bytes[24] + (connect_req_packet_bytes[25] << 8));
+	CalulatedCrc = IpHdrChecksum((struct iphdr *)&connect_req_packet_bytes[14]);
+	if (ReferenceCrc != CalulatedCrc)
+	{
+		printf("2: Checksum error ref %x != %x\n", ReferenceCrc, CalulatedCrc);
+		return 1;
+	}
+
+	ReferenceCrc = (connect_reply_packet_bytes[24] + (connect_reply_packet_bytes[25] << 8));
+	CalulatedCrc = IpHdrChecksum((struct iphdr *)&connect_reply_packet_bytes[14]);
+	if (ReferenceCrc != CalulatedCrc)
+	{
+		printf("3: Checksum error ref %x != %x\n", ReferenceCrc, CalulatedCrc);
 		return 1;
 	}
 
 	return 0;
 }
 
-// cm_t cm;
-// p_cm_t p_cm = &cm;
+/// @brief Check Icrc calculation
+/// @return 0 is succes
+uint16_t IcrcCheck()
+{
+	// Check iCRC calculation
+	uint32_t crc = calc_icrc32((char *)connect_req_packet_bytes, sizeof(connect_req_packet_bytes));
+	uint32_t *ptr = (uint32_t *)&connect_req_packet_bytes[sizeof(connect_req_packet_bytes) - 4];
+	if (*ptr != crc)
+	{
+		printf("1: iCRC Checksum error ref %x != %x\n", *ptr, crc);
+		return 1;
+	}
+
+	// Check iCRC calculation
+	crc = calc_icrc32(connect_reply_packet_bytes + 14, sizeof(connect_reply_packet_bytes));
+	ptr = (uint32_t *)&connect_reply_packet_bytes[sizeof(connect_reply_packet_bytes) - 4];
+	if (*ptr != crc)
+	{
+		printf("2: iCRC Checksum error ref %x != %x\n", *ptr, crc);
+		return 1;
+	}
+
+	return 0;
+}
+
+/// @brief Perform function checks
+/// @return
+uint16_t Checking()
+{
+	if (IpHdrCheck() != 0)
+		return 1;
+	if (IcrcCheck() != 0)
+		return 2;
+	return 0;
+}
 
 // Report_ib_base_transport_header(&connect_req_packet_bytes[0]);
 // Report_ib_extended_transport_header(&connect_req_packet_bytes[sizeof(struct ib_base_transport_header)]);
@@ -482,18 +285,18 @@ int main()
 	int sockfd;
 	char buffer[MAXLINE];
 	char data_out[MAXLINE];
-	char *hello = "Hello from server";
 	struct sockaddr_in servaddr, cliaddr;
 	struct roce_input_msg *roce_in = (struct roce_input_msg *)buffer;
 
-	if (Checking() != 0) {
-		return;
-	}
-
 	initCrc();
 
+	if (Checking() != 0)
+	{
+		return 0;
+	}
+
 	//  Creating socket file descriptor
-	//if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
+	// if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
 	if ((sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0)
 	{
 		perror("socket creation failed");
@@ -554,7 +357,7 @@ int main()
 #endif
 
 		int header = 28;
-		process_ip(&buffer);
+		process_ip(roce_in);
 		process_roce(&buffer[header], len - 28);
 
 		uint32_t src_addr = roce_in->iph.daddr;
