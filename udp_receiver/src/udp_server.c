@@ -47,6 +47,23 @@ struct sockaddr_in source, dest;
 
 FILE *log_txt;
 
+char data_out[MAXLINE];
+char dest_mac[6];
+char src_mac[6];
+
+struct sockaddr saddr;
+struct sockaddr_in source, dest;
+struct ifreq ifreq_c, ifreq_i, ifreq_ip; /// for each ioctl keep diffrent ifreq structure otherwise error may come in sending(sendto )
+#define INTF "eno2"
+int total_len = 0, send_len;
+unsigned char *sendbuff;
+#define DESTMAC0 0xd0
+#define DESTMAC1 0x67
+#define DESTMAC2 0xe5
+#define DESTMAC3 0x12
+#define DESTMAC4 0x6f
+#define DESTMAC5 0x8f
+
 struct roce_input_msg
 {
 	struct ethhdr ethh;
@@ -54,58 +71,6 @@ struct roce_input_msg
 	struct udphdr udph;
 	char payload[MAXLINE];
 } __attribute__((packed));
-
-void Report_ib_base_transport_header(char *_data)
-{
-	struct ib_base_transport_header *bth;
-
-	bth = (void *)_data;
-
-	printf("Report_ib_base_transport_header\n");
-	printf("Opcode                 %-10d\n", bth->opcode);
-	printf("se__m__padcnt__tver    %-10d\n", bth->se__m__padcnt__tver);
-	printf("pkey                   %-10d\n", bth->pkey);
-	printf("dest_qp                0x%x\n", ntohl(bth->dest_qp));
-	printf("psn                    %-10d\n", (ntohl((bth->ack__psn)) & 0xFFFFFF));
-}
-
-void Report_ib_extended_transport_header(char *_data)
-{
-	struct ib_datagram_extended_transport_header *bth;
-
-	bth = (void *)_data;
-
-	printf("\nib_datagram_extended_transport_header\n");
-	printf("qkey                  0x%x\n", ntohl(bth->qkey));
-	printf("src_qp                0x%x\n", ntohl(bth->src_qp));
-
-#ifdef raw
-	printf("raw: ");
-	for (int i = 0; i < sizeof(struct ib_datagram_extended_transport_header); i++)
-	{
-		printf("%2X ", (unsigned char)_data[i]);
-	}
-#endif
-}
-
-void Report_ib_management_datagram_field(char *_data)
-{
-	struct ib_management_datagram_field *bth;
-
-	bth = (void *)_data;
-
-	printf("\nReport_ib_management_datagram_field\n");
-	printf("Method                 0x%x\n", bth->ib_mad_params.method);
-	printf("R                      0x%x\n", bth->ib_mad_params.r);
-	printf("Class version          0x%x\n", (bth->class_version));
-	printf("Management class       0x%x\n", (bth->mgmt_class));
-	printf("Base version	       0x%x\n", (bth->base_version));
-	printf("Class specific         0x%x\n", ntohl(bth->class_specific));
-	printf("Status                 0x%x\n", ntohl(bth->status));
-	printf("Transaction ID         0x%lx\n", be64toh(bth->transaction_id));
-	printf("Attribute ID           0x%x\n", ntohl(bth->attribute_id));
-	printf("Attribute modifier     0x%x\n", ntohl(bth->attribute_modifier));
-}
 
 void ib_send_rep(char *data_in, char *data_out)
 {
@@ -160,7 +125,7 @@ void ib_send_rep(char *data_in, char *data_out)
 	rep->local_q_key = ntohl(0x0);
 	rep->local_qpn = req->ib_req_params_1.local_qpn;
 	rep->local_eecn = ntohl(0x0);
-	rep->starting_psn = ntohl(0xF);
+	rep->starting_psn = 0xF; //ntohl(0xF);
 	rep->resp_resources = 0x1;
 	rep->initiator_depth = 0x1;
 	rep->ib_rep_params_1.target_ack_delay = 0xF;
@@ -170,17 +135,6 @@ void ib_send_rep(char *data_in, char *data_out)
 	rep->ib_rep_params_2.srq = 0x0;
 	rep->ib_rep_params_2.reserved = 0x0;
 	rep->local_ca_guid = 0x02155dfffe240104;
-}
-
-int process_roce(char *buffer, int len)
-{
-	Report_ib_base_transport_header(&buffer[0]);
-	Report_ib_extended_transport_header(&buffer[sizeof(struct ib_base_transport_header) + 0]);
-	Report_ib_management_datagram_field(&buffer[sizeof(struct ib_base_transport_header) + sizeof(struct ib_datagram_extended_transport_header) + 0]);
-
-	uint32_t *ptr = (uint32_t *)&buffer[len - 4];
-	printf("\nCrc = %x\n", *ptr);
-	return 0;
 }
 
 uint16_t IpHdrChecksum(struct iphdr *hdr)
@@ -211,15 +165,6 @@ uint16_t IpHdrChecksum(struct iphdr *hdr)
 	Checksum = Checksum ^ 0x0000FFFF;
 
 	return (uint16_t)Checksum;
-}
-
-int process_ip(struct roce_input_msg *msg)
-{
-	printf("source addr   %x\n", ntohl(msg->iph.saddr));
-	printf("dest   addr   %x\n", ntohl(msg->iph.daddr));
-	printf("len           %d\n", ntohs(msg->iph.tot_len));
-	printf("checksum      %x\n", msg->iph.check);
-	printf("calc checksum %x\n", IpHdrChecksum(&msg->iph));
 }
 
 int InsertIcrc(unsigned char *buffer, int buflen)
@@ -311,10 +256,6 @@ uint16_t Checking()
 	return 0;
 }
 
-// Report_ib_base_transport_header(&connect_req_packet_bytes[0]);
-// Report_ib_extended_transport_header(&connect_req_packet_bytes[sizeof(struct ib_base_transport_header)]);
-// Report_ib_management_datagram_field(&connect_req_packet_bytes[sizeof(struct ib_base_transport_header) + sizeof(struct ib_datagram_extended_transport_header)]);
-
 int Process(struct roce_input_msg *roce_in, int len)
 {
 	char *buffer = (char *)roce_in;
@@ -329,8 +270,6 @@ int Process(struct roce_input_msg *roce_in, int len)
 	memcpy(roce_in->ethh.h_dest, src_mac, sizeof(src_mac));
 
 	int header = 28;
-	process_ip(roce_in);
-	process_roce(&buffer[header], len - 28);
 
 	uint32_t src_addr = roce_in->iph.daddr;
 	uint32_t dst_addr = roce_in->iph.saddr;
@@ -372,9 +311,14 @@ void ethernet_header(unsigned char *buffer, int buflen)
 {
 	struct ethhdr *eth = (struct ethhdr *)(buffer);
 	fprintf(log_txt, "\nEthernet Header\n");
-	// fprintf(log_txt,"\t|-Source Address	: %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n",eth->h_source[0],eth->h_source[1],eth->h_source[2],eth->h_source[3],eth->h_source[4],eth->h_source[5]);
-	// fprintf(log_txt,"\t|-Destination Address	: %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n",eth->h_dest[0],eth->h_dest[1],eth->h_dest[2],eth->h_dest[3],eth->h_dest[4],eth->h_dest[5]);
-	// fprintf(log_txt,"\t|-Protocol		: %d\n",eth->h_proto);
+
+	fprintf(log_txt,"\t|-Source Address	: %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n",eth->h_source[0],eth->h_source[1],eth->h_source[2],eth->h_source[3],eth->h_source[4],eth->h_source[5]);
+	fprintf(log_txt,"\t|-Destination Address	: %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n",eth->h_dest[0],eth->h_dest[1],eth->h_dest[2],eth->h_dest[3],eth->h_dest[4],eth->h_dest[5]);
+	fprintf(log_txt,"\t|-Protocol		: %d\n",eth->h_proto);
+
+	// Copy addres into variable
+	memcpy(dest_mac,eth->h_dest,sizeof(eth->h_dest));
+	memcpy(src_mac,eth->h_source,sizeof(eth->h_source));
 }
 
 void ip_header(unsigned char *buffer, int buflen)
@@ -390,15 +334,16 @@ void ip_header(unsigned char *buffer, int buflen)
 
 	fprintf(log_txt, "\nIP Header\n");
 	fprintf(log_txt, "\t|-Version              : %d\n", (unsigned int)ip->version);
-	// fprintf(log_txt , "\t|-Internet Header Length  : %d DWORDS or %d Bytes\n",(unsigned int)ip->ihl,((unsigned int)(ip->ihl))*4);
-	// fprintf(log_txt , "\t|-Type Of Service   : %d\n",(unsigned int)ip->tos);
-	// fprintf(log_txt , "\t|-Total Length      : %d  Bytes\n",ntohs(ip->tot_len));
-	fprintf(log_txt , "\t|-Identification      : %d\n",ntohs(ip->id));
-	// fprintf(log_txt , "\t|-Time To Live	    : %d\n",(unsigned int)ip->ttl);
-	fprintf(log_txt , "\t|-Protocol 	       : %d\n",(unsigned int)ip->protocol);
-	// fprintf(log_txt , "\t|-Header Checksum   : %d\n",ntohs(ip->check));
-	// fprintf(log_txt , "\t|-Source IP         : %s\n", inet_ntoa(source.sin_addr));
-	// fprintf(log_txt , "\t|-Destination IP    : %s\n",inet_ntoa(dest.sin_addr));
+	fprintf(log_txt, "\t|-Internet Header Len : %d DWORDS or %d Bytes\n", (unsigned int)ip->ihl, ((unsigned int)(ip->ihl)) * 4);
+	fprintf(log_txt, "\t|-Type Of Service     : %d\n", (unsigned int)ip->tos);
+	fprintf(log_txt, "\t|-Total Length        : %d  Bytes\n", ntohs(ip->tot_len));
+	fprintf(log_txt, "\t|-Identification      : %d\n", ntohs(ip->id));
+	fprintf(log_txt, "\t|-Time To Live	      : %d\n", (unsigned int)ip->ttl);
+	fprintf(log_txt, "\t|-Protocol 	          : %d\n", (unsigned int)ip->protocol);
+	fprintf(log_txt, "\t|-Header Checksum     : %d\n", ntohs(ip->check));
+	fprintf(log_txt, "\t|-Source IP           : %s\n", inet_ntoa(source.sin_addr));
+	fprintf(log_txt, "\t|-Destination IP      : %s\n", inet_ntoa(dest.sin_addr));
+
 }
 
 void ib_header(unsigned char *buffer, int buflen)
@@ -466,19 +411,19 @@ void ib_mad_header(unsigned char *buffer, int buflen)
 void udp_header(unsigned char *buffer, int buflen)
 {
 	// fprintf(log_txt, "\n*************************UDP Packet******************************");
-	////ethernet_header(buffer, buflen);
+	ethernet_header(buffer, buflen);
 	ip_header(buffer, buflen);
-	// fprintf(log_txt, "\nUDP Header\n");
+	fprintf(log_txt, "\nUDP Header\n");
 
 	struct udphdr *udp = (struct udphdr *)(buffer + iphdrlen + sizeof(struct ethhdr));
-	// fprintf(log_txt, "\t|-Source Port    	: %d\n", ntohs(udp->source));
-	// fprintf(log_txt, "\t|-Destination Port	: %d\n", ntohs(udp->dest));
-	// fprintf(log_txt, "\t|-UDP Length      	: %d\n", ntohs(udp->len));
-	// fprintf(log_txt, "\t|-UDP Checksum   	: %d\n", ntohs(udp->check));
+	fprintf(log_txt, "\t|-Source Port    	: %d\n", ntohs(udp->source));
+	fprintf(log_txt, "\t|-Destination Port	: %d\n", ntohs(udp->dest));
+	fprintf(log_txt, "\t|-UDP Length      	: %d\n", ntohs(udp->len));
+	fprintf(log_txt, "\t|-UDP Checksum   	: %d\n", ntohs(udp->check));
 
 	// payload(buffer,buflen);
 
-	// fprintf(log_txt, "*****************************************************************\n\n\n");
+	fprintf(log_txt, "*****************************************************************\n\n\n");
 	if (ntohs(udp->dest) == PORT)
 	{
 		ib_header(buffer, buflen);
@@ -490,6 +435,7 @@ void udp_header(unsigned char *buffer, int buflen)
 void data_process(unsigned char *buffer, int buflen)
 {
 	struct iphdr *ip = (struct iphdr *)(buffer + sizeof(struct ethhdr));
+	struct udphdr *ud = (struct udphdr *)(buffer + +sizeof(struct ethhdr) + +sizeof(struct iphdr));
 	static int total = 0;
 	static int tcp, udp, other;
 
@@ -498,6 +444,9 @@ void data_process(unsigned char *buffer, int buflen)
 	switch (ip->protocol) // see /etc/protocols file
 	{
 
+	case 1:
+	    ++icmp;
+		break;
 	case 6:
 		++tcp;
 		// tcp_header(buffer,buflen);
@@ -505,27 +454,18 @@ void data_process(unsigned char *buffer, int buflen)
 
 	case 17:
 		++udp;
-		udp_header(buffer, buflen);
+		if (ntohs(ud->dest) == PORT)
+		{
+			// Only process IB packets
+			udp_header(buffer, buflen);
+		}
 		break;
 
 	default:
 		++other;
 	}
-	printf("TCP: %d  UDP: %d  Other: %d  : IB %d Toatl: %d  \r", tcp, udp, other, ib, total);
+	printf("TCP: %d  UDP: %d  Other: %d  : IB %d  ICMP : %d Toatl: %d  \r", tcp, udp, other, ib, icmp, total);
 }
-
-struct sockaddr saddr;
-struct sockaddr_in source, dest;
-struct ifreq ifreq_c, ifreq_i, ifreq_ip; /// for each ioctl keep diffrent ifreq structure otherwise error may come in sending(sendto )
-#define INTF "lo"
-int total_len = 0, send_len;
-unsigned char *sendbuff;
-#define DESTMAC0 0xd0
-#define DESTMAC1 0x67
-#define DESTMAC2 0xe5
-#define DESTMAC3 0x12
-#define DESTMAC4 0x6f
-#define DESTMAC5 0x8f
 
 void get_eth_index(int sock_raw)
 {
@@ -565,12 +505,14 @@ void get_mac(int sock_raw)
 	eth->h_source[4] = (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[4]);
 	eth->h_source[5] = (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[5]);
 
-	eth->h_dest[0] = DESTMAC0;
-	eth->h_dest[1] = DESTMAC1;
-	eth->h_dest[2] = DESTMAC2;
-	eth->h_dest[3] = DESTMAC3;
-	eth->h_dest[4] = DESTMAC4;
-	eth->h_dest[5] = DESTMAC5;
+	memcpy(eth->h_dest,src_mac,sizeof(eth->h_dest));
+
+	// eth->h_dest[0] = DESTMAC0;
+	// eth->h_dest[1] = DESTMAC1;
+	// eth->h_dest[2] = DESTMAC2;
+	// eth->h_dest[3] = DESTMAC3;
+	// eth->h_dest[4] = DESTMAC4;
+	// eth->h_dest[5] = DESTMAC5;
 
 	eth->h_proto = htons(ETH_P_IP); // 0x800
 
@@ -648,7 +590,7 @@ void get_ip(int sock_raw, unsigned char *buffer, int buflen)
 	iph->ttl = 64;
 	iph->protocol = 17;
 	iph->saddr = inet_addr(inet_ntoa((((struct sockaddr_in *)&(ifreq_ip.ifr_addr))->sin_addr)));
-	iph->daddr = inet_addr("destination_ip"); // put destination IP address
+	iph->daddr = source.sin_addr.s_addr;	//   inet_addr("destination_ip"); // put destination IP address
 	total_len += sizeof(struct iphdr);
 	get_udp(buffer, buflen);
 
@@ -677,12 +619,15 @@ int SendRoce(unsigned char *buffer, int buflen)
 	struct sockaddr_ll sadr_ll;
 	sadr_ll.sll_ifindex = ifreq_i.ifr_ifindex;
 	sadr_ll.sll_halen = ETH_ALEN;
-	sadr_ll.sll_addr[0] = DESTMAC0;
-	sadr_ll.sll_addr[1] = DESTMAC1;
-	sadr_ll.sll_addr[2] = DESTMAC2;
-	sadr_ll.sll_addr[3] = DESTMAC3;
-	sadr_ll.sll_addr[4] = DESTMAC4;
-	sadr_ll.sll_addr[5] = DESTMAC5;
+
+	memcpy(sadr_ll.sll_addr,src_mac,sizeof(sadr_ll.sll_addr));
+
+	// sadr_ll.sll_addr[0] = DESTMAC0;
+	// sadr_ll.sll_addr[1] = DESTMAC1;
+	// sadr_ll.sll_addr[2] = DESTMAC2;
+	// sadr_ll.sll_addr[3] = DESTMAC3;
+	// sadr_ll.sll_addr[4] = DESTMAC4;
+	// sadr_ll.sll_addr[5] = DESTMAC5;
 
 	// InserCrc
 	InsertIcrc(sendbuff, total_len);
@@ -697,8 +642,6 @@ int SendRoce(unsigned char *buffer, int buflen)
 		return -1;
 	}
 }
-
-char data_out[MAXLINE];
 
 int raw_socket()
 {
@@ -730,6 +673,8 @@ int raw_socket()
 			return -1;
 		}
 		fflush(log_txt);
+
+		// Process incomming data
 		data_process(buffer, buflen);
 
 		if (ib_conn_req == 1)
@@ -778,131 +723,6 @@ int main()
 	}
 
 	raw_socket();
-	
-	// // Apply reference message
-	// struct roce_input_msg connect_msg;
-	// memcpy(&connect_msg, connect_req_packet_bytes, sizeof(connect_req_packet_bytes));
 
-	// process_ip(&connect_msg);
-
-	// Process(&connect_msg, sizeof(connect_req_packet_bytes));
-	// unsigned char *ptr = (unsigned char *)&connect_msg;
-
-	// process_ip(&connect_msg);
-	// //InsertIcrc(ptr,sizeof(connect_req_packet_bytes));
-
-	// for (int i = 0, n = 0; i < sizeof(connect_req_packet_bytes) - 1; i++)
-	// {
-	// 	if (connect_reply_packet_bytes[i] != *(ptr + i))
-	// 	{
-	// 		printf("[%3d] %.2X %.2X\n ", i, connect_reply_packet_bytes[i], *(ptr + i));
-	// 	}
-	// }
-	// return 0;
-
-
-// 	//  Creating socket file descriptor
-// 	// if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0)
-// 	// if ((sockfd = socket(AF_INET, SOCK_RAW, IPPROTO_UDP)) < 0)
-// 	if ((sockfd = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL))) < 0)
-// 	{
-// 		perror("socket creation failed");
-// 		exit(EXIT_FAILURE);
-// 	}
-
-// 	memset(&servaddr, 0, sizeof(servaddr));
-// 	memset(&cliaddr, 0, sizeof(cliaddr));
-
-// 	// Filling server information
-// 	servaddr.sin_family = AF_INET; // IPv4
-// 	servaddr.sin_addr.s_addr = INADDR_ANY;
-// 	servaddr.sin_port = htons(PORT);
-
-// 	// Bind the socket with the server address
-// 	// if (bind(sockfd, (const struct sockaddr *)&servaddr,
-// 	// 		 sizeof(servaddr)) < 0)
-// 	// {
-// 	// 	perror("bind failed");
-// 	// 	exit(EXIT_FAILURE);
-// 	// }
-
-// 	printf("Server raw listining on port  : %d\n", PORT);
-
-// 	while (1 == 1)
-// 	{
-// 		int len = sizeof(cliaddr); // len is value/result
-// 		int n = recvfrom(sockfd, (char *)buffer, MAXLINE,
-// 						 MSG_WAITALL, (struct sockaddr *)&cliaddr,
-// 						 &len);
-
-// 		struct iphdr *iph = (struct iphdr *)buffer;
-// 		struct udphdr *udph = (struct udphdr *)(buffer + sizeof(struct ip));
-
-// 		fflush(log_txt);
-// 		data_process(buffer, len);
-// 		continue;
-
-// 		if (ntohs(udph->uh_dport) != PORT)
-// 		{
-// 			if (len > 20)
-// 			{
-// 				printf("%d .\n", len);
-// 			}
-// 			continue;
-// 		}
-
-// 		printf("Message received with length of : %d\n", n);
-// 		printf("port        %d\n", ntohs(roce_in->udph.uh_dport));
-// 		printf("source addr %x\n", ntohl(roce_in->iph.saddr));
-// 		printf("dest   addr %x\n", ntohl(roce_in->iph.daddr));
-// 		printf("len         %d\n", ntohs(roce_in->iph.tot_len));
-
-// #ifdef raw
-// 		printf("\nIP header: ");
-// 		for (int i = 0; i < 20; i++)
-// 		{
-// 			printf("%2X ", (unsigned char)buffer[i]);
-// 		}
-// 		printf("\nUDP header: ");
-// 		for (int i = 20; i < 20 + 8; i++)
-// 		{
-// 			printf("%2X ", (unsigned char)buffer[i]);
-// 		}
-// #endif
-
-// 		int header = 28;
-// 		process_ip(roce_in);
-// 		process_roce(&buffer[header], len - 28);
-
-// 		uint32_t src_addr = roce_in->iph.daddr;
-// 		uint32_t dst_addr = roce_in->iph.saddr;
-
-// 		ib_send_rep(&buffer[28], data_out);
-// 		memcpy(&buffer[28], data_out, 280);
-
-// 		roce_in->iph.saddr = src_addr;
-// 		roce_in->iph.daddr = dst_addr;
-
-// 		uint32_t src_port = roce_in->udph.uh_dport;
-// 		uint32_t dst_port = roce_in->udph.uh_sport;
-// 		// roce_in->udph.uh_sport = dst_port;
-// 		// roce_in->udph.uh_dport = src_port;
-// 		roce_in->udph.check = 0;
-// 		roce_in->iph.protocol = 0x11;
-
-// 		for (int i = 0; i < 280 + HDR_SIZE; i++)
-// 		{
-// 			printf("%.2x ", (unsigned char)buffer[i]);
-// 		}
-
-// 		// Add crc
-// 		uint32_t crc = calc_icrc32(buffer, n);
-// 		uint32_t *ptr = (uint32_t *)&buffer[n - 4];
-// 		*ptr = crc;
-
-// 		sendto(sockfd, buffer, 280 + HDR_SIZE - 20, MSG_CONFIRM, (const struct sockaddr *)&cliaddr, len);
-
-// 		printf("\nWaiting for next message.\n");
-// 	}
 	return 0;
 }
