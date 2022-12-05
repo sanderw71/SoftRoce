@@ -107,7 +107,8 @@ struct ib_base_transport_header
 	/* Destination queue pair */
 	uint32_t dest_qp;
 	/* Packet sequence number and acknowledge request */
-	uint32_t ack__psn;
+	uint32_t ack__req			: 8;
+	uint32_t ack__psn			: 24;
 } __attribute__((packed));
 
 /* An Infiniband Datagram Extended Transport Header */

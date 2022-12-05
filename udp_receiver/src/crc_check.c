@@ -116,21 +116,22 @@ uint32_t calc_icrc32(char *data, int len)
   }
 
   uint32_t icrc_be32 = (cm_crc(p_cm) & 0xffffffff);
-  uint32_t icrc = be32_to_le32(icrc_be32);
+  //uint32_t icrc = be32_to_le32(icrc_be32);
 
-  return icrc;
+  return icrc_be32;
 }
 
 
 int Crc_Checking(void)
 {
-  uint32_t icrc;
+  uint32_t icrc1,icrc2;
 
-  icrc = calc_icrc32(connect_request, sizeof(connect_request));
-  printf("icrc = %x\n", icrc);
-
-  icrc = calc_icrc32(rc_send_only, sizeof(rc_send_only));
-  printf("icrc = %x\n", icrc);
+  icrc1 = calc_icrc32(connect_request, sizeof(connect_request)-4);
+  icrc2 = calc_icrc32(connect_request, sizeof(connect_request)-4);
+  if (icrc1 != icrc2) {
+    printf("Crc checking error");
+    exit(0);
+  }
 }
 
 void initCrc(void)
