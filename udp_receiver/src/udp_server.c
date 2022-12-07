@@ -24,6 +24,7 @@
 #include "ib.h"
 
 #include "ref_packets.h"
+#include "opcode.h"
 
 // ROCE Server port
 #define SPORT 55410
@@ -41,7 +42,7 @@ uint32_t calc_icrc32(char *data, int len);
 uint32_t bth_psn = 0;
 uint32_t crc = 0xFFFFFFFF;
 
-int icmp, igmp, other, iphdrlen, ib, ib_conn_req;
+int icmp, igmp, other, iphdrlen, ib, ib_conn_req, ib_dconn_req;
 struct sockaddr saddr;
 struct sockaddr_in source, dest;
 
@@ -54,7 +55,11 @@ char src_mac[6];
 struct sockaddr saddr;
 struct sockaddr_in source, dest;
 struct ifreq ifreq_c, ifreq_i, ifreq_ip; /// for each ioctl keep diffrent ifreq structure otherwise error may come in sending(sendto )
-#define INTF "eno2"
+
+//#define INTF "eno2"
+#define INTF "lo"
+//char INTF[12];
+
 int total_len = 0, send_len;
 unsigned char *sendbuff;
 #define DESTMAC0 0xd0
@@ -63,6 +68,8 @@ unsigned char *sendbuff;
 #define DESTMAC3 0x12
 #define DESTMAC4 0x6f
 #define DESTMAC5 0x8f
+
+int SendRoce(unsigned char *buffer, int buflen);
 
 struct roce_input_msg
 {
@@ -96,7 +103,7 @@ void ib_send_rep(char *data_in, char *data_out)
 
 	memset(data_out, 0, 280);
 
-	printf("ib_send_rep : opcode %x", bth_in->opcode);
+	printf("ib_send_rep : opcode %x\n", bth_in->opcode);
 	bth_out->opcode = bth_in->opcode;
 	bth_out->se__m__padcnt__tver = bth_in->se__m__padcnt__tver;
 	bth_out->pkey = bth_in->pkey;
@@ -125,7 +132,72 @@ void ib_send_rep(char *data_in, char *data_out)
 	rep->local_q_key = ntohl(0x0);
 	rep->local_qpn = req->ib_req_params_1.local_qpn;
 	rep->local_eecn = ntohl(0x0);
-	rep->starting_psn = 0xF; //ntohl(0xF);
+	rep->starting_psn = 0xF; // ntohl(0xF);
+	rep->resp_resources = 0x1;
+	rep->initiator_depth = 0x1;
+	rep->ib_rep_params_1.target_ack_delay = 0xF;
+	rep->ib_rep_params_1.failover_accepted = 0x0;
+	rep->ib_rep_params_1.end_to_end_flow_control = 0x0;
+	rep->ib_rep_params_2.rnr_retry_count = 0x7;
+	rep->ib_rep_params_2.srq = 0x0;
+	rep->ib_rep_params_2.reserved = 0x0;
+	rep->local_ca_guid = 0x02155dfffe240104;
+}
+
+void ib_disconnect_rep(char *data_in, char *data_out)
+{
+	struct ib_base_transport_header *bth_in;
+	struct ib_datagram_extended_transport_header *deth_in;
+	struct ib_management_datagram_field *mad_in;
+	struct ib_req *req;
+
+	struct ib_base_transport_header *bth_out;
+	struct ib_datagram_extended_transport_header *deth_out;
+	struct ib_management_datagram_field *mad_out;
+	struct ib_rep *rep;
+
+	bth_in = (void *)&data_in[0];
+	deth_in = (void *)&data_in[sizeof(struct ib_base_transport_header)];
+	mad_in = (void *)&data_in[sizeof(struct ib_base_transport_header) + sizeof(struct ib_datagram_extended_transport_header)];
+	req = (void *)&data_in[sizeof(struct ib_base_transport_header) + sizeof(struct ib_datagram_extended_transport_header) + sizeof(struct ib_management_datagram_field)];
+
+	bth_out = (void *)&data_out[0];
+	deth_out = (void *)&data_out[sizeof(struct ib_base_transport_header)];
+	mad_out = (void *)&data_out[sizeof(struct ib_base_transport_header) + sizeof(struct ib_datagram_extended_transport_header)];
+	rep = (void *)&data_out[sizeof(struct ib_base_transport_header) + sizeof(struct ib_datagram_extended_transport_header) + sizeof(struct ib_management_datagram_field)];
+
+	memset(data_out, 0, 280);
+
+	printf("ib_send_rep : opcode %x\n", bth_in->opcode);
+	bth_out->opcode = bth_in->opcode;
+	bth_out->se__m__padcnt__tver = bth_in->se__m__padcnt__tver;
+	bth_out->pkey = bth_in->pkey;
+	bth_out->dest_qp = bth_in->dest_qp;
+	bth_out->ack__req = bth_in->ack__req;
+	bth_out->ack__psn = ((bth_psn & 0xFF) << 16) + ((bth_psn & 0x00FF00)) + ((bth_psn & 0xFF0000) >> 16);
+	bth_psn++;
+
+	deth_out->qkey = deth_in->qkey;
+	deth_out->src_qp = deth_in->src_qp;
+
+	mad_out->ib_mad_params.method = mad_in->ib_mad_params.method;
+	mad_out->ib_mad_params.r = mad_in->ib_mad_params.r;
+
+	mad_out->class_version = mad_in->class_version;
+	mad_out->mgmt_class = mad_in->mgmt_class;
+	mad_out->base_version = mad_in->base_version;
+	mad_out->class_specific = mad_in->class_specific;
+	mad_out->status = mad_in->status;
+	mad_out->transaction_id = mad_in->transaction_id;
+	mad_out->attribute_id = htons(0x16);
+	mad_out->attribute_modifier = mad_in->attribute_modifier;
+
+	rep->local_comm_id = ntohl(0x1234);
+	rep->remote_comm_id = req->local_comm_id;
+	rep->local_q_key = ntohl(0x0);
+	rep->local_qpn = req->ib_req_params_1.local_qpn;
+	rep->local_eecn = ntohl(0x0);
+	rep->starting_psn = 0xF; // ntohl(0xF);
 	rep->resp_resources = 0x1;
 	rep->initiator_depth = 0x1;
 	rep->ib_rep_params_1.target_ack_delay = 0xF;
@@ -167,11 +239,20 @@ uint16_t IpHdrChecksum(struct iphdr *hdr)
 	return (uint16_t)Checksum;
 }
 
+int CheckIcrc(unsigned char *buffer, int buflen)
+{
+	uint32_t icrc = calc_icrc32(buffer, buflen);
+	uint32_t *ptr = (uint32_t *)&buffer[buflen - 4];
+	printf("CheckIcrc %x = %x\n", *ptr, icrc);
+	return (*ptr == icrc);
+}
+
 int InsertIcrc(unsigned char *buffer, int buflen)
 {
 	uint32_t icrc = calc_icrc32(buffer, buflen);
 	uint32_t *ptr = (uint32_t *)&buffer[buflen - 4];
 	*ptr = icrc;
+	return 0;
 }
 
 /// @brief Check IP Header calculation function
@@ -296,7 +377,7 @@ void payload(unsigned char *buffer, int buflen, char *name)
 	fprintf(log_txt, "\nData %s, with size of %d bytes\n", name, buflen);
 
 	fprintf(log_txt, "\n %.4x :", i);
-	int remaining_data = buflen - (iphdrlen + sizeof(struct ethhdr) + sizeof(struct udphdr));
+	int remaining_data = buflen; // - (iphdrlen + sizeof(struct ethhdr) + sizeof(struct udphdr));
 	for (i = 0; i < remaining_data; i++)
 	{
 		if (i != 0 && i % 16 == 0)
@@ -312,13 +393,13 @@ void ethernet_header(unsigned char *buffer, int buflen)
 	struct ethhdr *eth = (struct ethhdr *)(buffer);
 	fprintf(log_txt, "\nEthernet Header\n");
 
-	fprintf(log_txt,"\t|-Source Address	: %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n",eth->h_source[0],eth->h_source[1],eth->h_source[2],eth->h_source[3],eth->h_source[4],eth->h_source[5]);
-	fprintf(log_txt,"\t|-Destination Address	: %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n",eth->h_dest[0],eth->h_dest[1],eth->h_dest[2],eth->h_dest[3],eth->h_dest[4],eth->h_dest[5]);
-	fprintf(log_txt,"\t|-Protocol		: %d\n",eth->h_proto);
+	fprintf(log_txt, "\t|-Source Address	: %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n", eth->h_source[0], eth->h_source[1], eth->h_source[2], eth->h_source[3], eth->h_source[4], eth->h_source[5]);
+	fprintf(log_txt, "\t|-Destination Address	: %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n", eth->h_dest[0], eth->h_dest[1], eth->h_dest[2], eth->h_dest[3], eth->h_dest[4], eth->h_dest[5]);
+	fprintf(log_txt, "\t|-Protocol		: %d\n", eth->h_proto);
 
 	// Copy addres into variable
-	memcpy(dest_mac,eth->h_dest,sizeof(eth->h_dest));
-	memcpy(src_mac,eth->h_source,sizeof(eth->h_source));
+	memcpy(dest_mac, eth->h_dest, sizeof(eth->h_dest));
+	memcpy(src_mac, eth->h_source, sizeof(eth->h_source));
 }
 
 void ip_header(unsigned char *buffer, int buflen)
@@ -343,10 +424,9 @@ void ip_header(unsigned char *buffer, int buflen)
 	fprintf(log_txt, "\t|-Header Checksum     : %d\n", ntohs(ip->check));
 	fprintf(log_txt, "\t|-Source IP           : %s\n", inet_ntoa(source.sin_addr));
 	fprintf(log_txt, "\t|-Destination IP      : %s\n", inet_ntoa(dest.sin_addr));
-
 }
 
-void ib_header(unsigned char *buffer, int buflen)
+uint8_t ib_header(unsigned char *buffer, int buflen)
 {
 	struct ib_base_transport_header *ibth = (struct ib_base_transport_header *)(buffer + iphdrlen + sizeof(struct ethhdr) + sizeof(struct udphdr));
 
@@ -359,6 +439,8 @@ void ib_header(unsigned char *buffer, int buflen)
 	fprintf(log_txt, "\t|-Acknowledge Req   : %x\n", ibth->ack__req);
 	fprintf(log_txt, "\t|-Packet Seq Nr   	: %d\n", ((ibth->ack__psn) >> 16) & 0xFF + ((ibth->ack__psn) >> 8) & 0xFF + ((ibth->ack__psn) >> 0) & 0xFF);
 	fprintf(log_txt, "*****************************************************************\n\n\n");
+
+	return ibth->opcode;
 }
 
 void ib_extended_transport_header(unsigned char *buffer, int buflen)
@@ -400,12 +482,144 @@ void ib_mad_header(unsigned char *buffer, int buflen)
 	fprintf(log_txt, "\t|-Attribute Modifier: %d\n", ntohs(madh->attribute_modifier));
 	fprintf(log_txt, "*****************************************************************\n\n\n");
 
+	// ConnectRequest
 	if (ntohs(madh->attribute_id) == 0x10)
 	{
+		printf("\nConnect request\n");
 		ib_request(buffer, buflen);
 		ib_conn_req = 1;
 		ib++;
 	}
+
+	// ReadyToUse
+	if (ntohs(madh->attribute_id) == 0x14)
+	{
+		printf("\nReady to use\n");
+		ib++;
+	}
+
+	// ReadyToUse
+	if (ntohs(madh->attribute_id) == 0x15)
+	{
+		printf("\nDisconnect\n");
+		ib_dconn_req = 1;
+		ib++;
+	}
+}
+
+void ib_rc_send_only(unsigned char *buffer, int buflen)
+{
+	struct udphdr *udp = (struct udphdr *)(buffer + iphdrlen + sizeof(struct ethhdr));
+
+	unsigned char *data = (unsigned char *)(buffer + iphdrlen + sizeof(struct ethhdr) + sizeof(struct udphdr) + sizeof(ib_header));
+	unsigned int length = ntohs(udp->len) - sizeof(struct udphdr) - sizeof(struct ib_base_transport_header) - 4;
+
+	fprintf(log_txt, "\n*************************Infiniband packet*******************");
+	fprintf(log_txt, "\n ib_rc_send_only\n");
+	fprintf(log_txt, "\t|-Lenght                   : %d\n", length);
+	fprintf(log_txt, "*****************************************************************\n\n\n");
+
+	payload(data, length, "rc_send_only");
+}
+
+void ib_send_ack(unsigned char *buffer, int buflen)
+{
+	// Input
+	struct ib_base_transport_header *bth_in;
+
+	// Output
+	struct ib_base_transport_header *bth_out;
+	struct ib_ack_extended_transport_header *aeth_out;
+
+	// Input
+	bth_in = (void *)&buffer[0];
+
+	// Output
+	bth_out = (void *)&data_out[0];
+	aeth_out = (void *)&data_out[sizeof(struct ib_base_transport_header)];
+
+	memset(data_out, 0, 20);
+
+	// printf("ib_send_ack : opcode %x", 11);
+	bth_out->opcode = IBV_OPCODE_ACKNOWLEDGE;
+	bth_out->se__m__padcnt__tver = bth_in->se__m__padcnt__tver;
+	bth_out->pkey = bth_in->pkey;
+	bth_out->dest_qp = bth_in->dest_qp;
+	bth_out->ack__req = 0;
+	bth_out->ack__psn = bth_in->ack__psn;
+
+	aeth_out->Syndrome = 0x1F;
+	aeth_out->Message_Sequence_Number = 0x010000; // TODO correct
+
+	SendRoce(data_out, 20);
+}
+
+void ib_send_rdma_read_response(unsigned char *buffer, int buflen)
+{
+	// Input
+	struct ib_base_transport_header *bth_in;
+	struct ib_rdma_extended_transport_header *reth_in;
+
+	// Output
+	struct ib_base_transport_header *bth_out;
+	struct ib_ack_extended_transport_header *aeth_out;
+
+	// Input
+	bth_in = (void *)&buffer[0];
+	reth_in = (void *)&buffer[sizeof(struct ib_base_transport_header)];
+
+	// Output
+	bth_out = (void *)&data_out[0];
+	aeth_out = (void *)&data_out[sizeof(struct ib_base_transport_header)];
+
+	int data = ntohl(reth_in->dma_length);
+	memset(data_out, 0, 20 + data);
+
+	// printf("ib_send_ack : opcode %x", 11);
+	bth_out->opcode = IBV_OPCODE_RDMA_READ_RESPONSE_ONLY;
+	bth_out->se__m__padcnt__tver = bth_in->se__m__padcnt__tver;
+	bth_out->pkey = bth_in->pkey;
+	bth_out->dest_qp = bth_in->dest_qp;
+	bth_out->ack__req = 0;
+	bth_out->ack__psn = bth_in->ack__psn;
+
+	aeth_out->Syndrome = 0x1F;
+	aeth_out->Message_Sequence_Number = 0x010000; // TODO correct
+
+	SendRoce(data_out, 20 + data);
+}
+
+void ib_send_rdma_write_response(unsigned char *buffer, int buflen)
+{
+	// Input
+	struct ib_base_transport_header *bth_in;
+	struct ib_rdma_extended_transport_header *reth_in;
+
+	// Output
+	struct ib_base_transport_header *bth_out;
+	struct ib_ack_extended_transport_header *aeth_out;
+
+	// Input
+	bth_in = (void *)&buffer[0];
+
+	// Output
+	bth_out = (void *)&data_out[0];
+	aeth_out = (void *)&data_out[sizeof(struct ib_base_transport_header)];
+
+	memset(data_out, 0, 20);
+
+	// printf("ib_send_ack : opcode %x", 11);
+	bth_out->opcode = IBV_OPCODE_ACKNOWLEDGE;
+	bth_out->se__m__padcnt__tver = bth_in->se__m__padcnt__tver;
+	bth_out->pkey = bth_in->pkey;
+	bth_out->dest_qp = bth_in->dest_qp;
+	bth_out->ack__req = 0;
+	bth_out->ack__psn = bth_in->ack__psn;
+
+	aeth_out->Syndrome = 0x1F;
+	aeth_out->Message_Sequence_Number = 0x010000; // TODO correct
+
+	SendRoce(data_out, 20);
 }
 
 void udp_header(unsigned char *buffer, int buflen)
@@ -426,9 +640,42 @@ void udp_header(unsigned char *buffer, int buflen)
 	fprintf(log_txt, "*****************************************************************\n\n\n");
 	if (ntohs(udp->dest) == PORT)
 	{
-		ib_header(buffer, buflen);
-		ib_extended_transport_header(buffer, buflen);
-		ib_mad_header(buffer, buflen);
+		IcrcCheck();
+		uint8_t Opcode = ib_header(buffer, buflen);
+
+		switch (Opcode)
+		{
+		case IBV_OPCODE_UC_SEND_ONLY:
+			// printf("\nIBV_OPCODE_UC_SEND_ONLY\n");
+			// ib_extended_transport_header(buffer, buflen);
+			// ib_mad_header(buffer, buflen);
+			// break;
+		case IBV_OPCODE_UD_SEND_ONLY:
+			printf("\nIBV_OPCODE_UD_SEND_ONLY\n");
+			ib_extended_transport_header(buffer, buflen);
+			ib_mad_header(buffer, buflen);
+			break;
+
+		case IBV_OPCODE_RC_SEND_ONLY:
+			printf("\nIBV_OPCODE_RC_SEND_ONLY\n");
+			ib_rc_send_only(buffer, buflen);
+			ib_send_ack(&buffer[42], buflen);
+			break;
+
+		case IBV_OPCODE_RDMA_READ_REQUEST:
+			printf("\nIBV_OPCODE_RDMA_READ_REQUEST\n");
+			ib_send_rdma_read_response(&buffer[42], buflen);
+			break;
+
+		case IBV_OPCODE_RDMA_WRITE_ONLY:
+			printf("\nIBV_OPCODE_RDMA_WRITE_ONLY\n");
+			ib_send_rdma_write_response(&buffer[42], buflen);
+			break;
+
+		default:
+			// printf("\nOpcode = %d\n", Opcode);
+			break;
+		}
 	}
 }
 
@@ -445,7 +692,7 @@ void data_process(unsigned char *buffer, int buflen)
 	{
 
 	case 1:
-	    ++icmp;
+		++icmp;
 		break;
 	case 6:
 		++tcp;
@@ -464,7 +711,9 @@ void data_process(unsigned char *buffer, int buflen)
 	default:
 		++other;
 	}
+#ifdef DEBUG
 	printf("TCP: %d  UDP: %d  Other: %d  : IB %d  ICMP : %d Toatl: %d  \r", tcp, udp, other, ib, icmp, total);
+#endif
 }
 
 void get_eth_index(int sock_raw)
@@ -475,7 +724,7 @@ void get_eth_index(int sock_raw)
 	if ((ioctl(sock_raw, SIOCGIFINDEX, &ifreq_i)) < 0)
 		printf("error in index ioctl reading");
 
-	printf("index=%d\n", ifreq_i.ifr_ifindex);
+	// printf("index=%d\n", ifreq_i.ifr_ifindex);
 }
 
 void get_mac(int sock_raw)
@@ -486,9 +735,9 @@ void get_mac(int sock_raw)
 	if ((ioctl(sock_raw, SIOCGIFHWADDR, &ifreq_c)) < 0)
 		printf("error in SIOCGIFHWADDR ioctl reading");
 
-	printf("Mac= %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n", (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[0]), (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[1]), (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[2]), (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[3]), (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[4]), (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[5]));
+	// printf("Mac= %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n", (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[0]), (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[1]), (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[2]), (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[3]), (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[4]), (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[5]));
 
-	printf("ethernet packaging start ... \n");
+	// printf("ethernet packaging start ... \n");
 
 	struct ethhdr *eth = (struct ethhdr *)(sendbuff);
 	// eth->h_dest[0] = eth->h_source[0];
@@ -505,7 +754,7 @@ void get_mac(int sock_raw)
 	eth->h_source[4] = (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[4]);
 	eth->h_source[5] = (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[5]);
 
-	memcpy(eth->h_dest,src_mac,sizeof(eth->h_dest));
+	memcpy(eth->h_dest, src_mac, sizeof(eth->h_dest));
 
 	// eth->h_dest[0] = DESTMAC0;
 	// eth->h_dest[1] = DESTMAC1;
@@ -516,7 +765,7 @@ void get_mac(int sock_raw)
 
 	eth->h_proto = htons(ETH_P_IP); // 0x800
 
-	printf("ethernet packaging done.\n");
+	// printf("ethernet packaging done.\n");
 
 	total_len += sizeof(struct ethhdr);
 }
@@ -590,7 +839,7 @@ void get_ip(int sock_raw, unsigned char *buffer, int buflen)
 	iph->ttl = 64;
 	iph->protocol = 17;
 	iph->saddr = inet_addr(inet_ntoa((((struct sockaddr_in *)&(ifreq_ip.ifr_addr))->sin_addr)));
-	iph->daddr = source.sin_addr.s_addr;	//   inet_addr("destination_ip"); // put destination IP address
+	iph->daddr = source.sin_addr.s_addr; //   inet_addr("destination_ip"); // put destination IP address
 	total_len += sizeof(struct iphdr);
 	get_udp(buffer, buflen);
 
@@ -620,14 +869,8 @@ int SendRoce(unsigned char *buffer, int buflen)
 	sadr_ll.sll_ifindex = ifreq_i.ifr_ifindex;
 	sadr_ll.sll_halen = ETH_ALEN;
 
-	memcpy(sadr_ll.sll_addr,src_mac,sizeof(sadr_ll.sll_addr));
-
-	// sadr_ll.sll_addr[0] = DESTMAC0;
-	// sadr_ll.sll_addr[1] = DESTMAC1;
-	// sadr_ll.sll_addr[2] = DESTMAC2;
-	// sadr_ll.sll_addr[3] = DESTMAC3;
-	// sadr_ll.sll_addr[4] = DESTMAC4;
-	// sadr_ll.sll_addr[5] = DESTMAC5;
+	// Set dest MAC adddres
+	memcpy(sadr_ll.sll_addr, src_mac, sizeof(sadr_ll.sll_addr));
 
 	// InserCrc
 	InsertIcrc(sendbuff, total_len);
@@ -645,7 +888,6 @@ int SendRoce(unsigned char *buffer, int buflen)
 
 int raw_socket()
 {
-
 	int sock_r, saddr_len, buflen;
 
 	unsigned char *buffer = (unsigned char *)malloc(65536);
@@ -677,14 +919,18 @@ int raw_socket()
 		// Process incomming data
 		data_process(buffer, buflen);
 
+		// Send reply
 		if (ib_conn_req == 1)
 		{
 			ib_conn_req = 0;
-			ib_send_rep(&buffer[42], data_out);
-			payload((unsigned char *)data_out, 280, "payload");
-			SendRoce(data_out, 280);
-			fflush(log_txt);
+			printf("Connect Request\n");
+			// CheckIcrc(buffer, buflen);
 
+			// Create and send reply message
+			ib_send_rep(&buffer[42], data_out);
+			SendRoce(data_out, 280);
+
+#ifdef DEBUG
 			// Compare payload with ref
 			for (int i = 0, n = 0; i < sizeof(connect_reply_payload_packet_bytes); i++)
 			{
@@ -693,20 +939,54 @@ int raw_socket()
 					printf("[%3d - %.3X] %.2X %.2X\n", i, i + 42, connect_reply_payload_packet_bytes[i], (unsigned char)data_out[i]);
 				}
 			}
+#endif
+		}
+		// Send reply
+		if (ib_dconn_req == 1)
+		{
+			ib_conn_req = 0;
+			printf("Disconnect Request\n");
+
+			ib_disconnect_rep(&buffer[42], data_out);
+			SendRoce(data_out, 280);
+			return 0;
 		}
 	}
 
 	// close(sock_r);// use signals to close socket
 }
 
-// Driver code
-int main()
+void usage() 
 {
-	int sockfd;
-	char buffer[MAXLINE];
-	char data_out[MAXLINE];
-	struct sockaddr_in servaddr, cliaddr;
-	struct roce_input_msg *roce_in = (struct roce_input_msg *)buffer;
+	printf("Usage:\n");
+	printf("udp_server: [-n device]\n");
+	exit(1);
+}
+
+// Driver code
+int main(int argc, char **argv) 
+{
+	int ret, option;
+
+	//strcpy(INTF, "lo");
+
+
+	while ((option = getopt(argc, argv, "a:p:")) != -1)
+	{
+		switch (option)
+		{
+		case 'n':
+			//strcpy(INTF,optarg);
+			/* Remember, this will overwrite the port info */
+			break;
+		default:
+			usage();
+			break;
+		}
+	}
+
+	printf ("\nUsing network if %s\n",INTF);
+
 
 	initCrc();
 
@@ -723,6 +1003,8 @@ int main()
 	}
 
 	raw_socket();
+
+	//fclose(log_txt);
 
 	return 0;
 }

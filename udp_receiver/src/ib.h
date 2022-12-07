@@ -107,8 +107,8 @@ struct ib_base_transport_header
 	/* Destination queue pair */
 	uint32_t dest_qp;
 	/* Packet sequence number and acknowledge request */
-	uint32_t ack__req			: 8;
-	uint32_t ack__psn			: 24;
+	uint32_t ack__req : 8;
+	uint32_t ack__psn : 24;
 } __attribute__((packed));
 
 /* An Infiniband Datagram Extended Transport Header */
@@ -209,4 +209,27 @@ struct ib_req
 	uint64_t alternate_remote_port_gid_2;
 	struct ib_req_params_8 ib_req_params_8;
 	struct ib_req_params_9 ib_req_params_9;
+} __attribute__((packed));
+
+/** ACK EXTENDED TRANSPORT HEADER (AETH) - 4 BYTES */
+struct ib_ack_extended_transport_header
+{
+	// This field indicates if this is an ACK or NAK packet plus additional information about the ACK or NAK.
+	uint32_t Syndrome : 8;
+
+	// This field indicates the sequence number of the last message completed at the responder.
+	uint32_t Message_Sequence_Number : 24;
+} __attribute__((packed));
+
+/** RDMA Extended Transport Header - 16 BYTES */
+struct ib_rdma_extended_transport_header
+{
+	// This field is the Virtual Address of the RDMA operation.
+	uint64_t virtual_address;
+
+	// This field indicates the sequence number of the last message completed at the responder.
+	uint32_t remote_key;
+
+	// This field indicates the length (in Bytes) of the DMA operation.
+	uint32_t dma_length;
 } __attribute__((packed));
