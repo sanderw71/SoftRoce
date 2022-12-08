@@ -35,6 +35,8 @@
 #define UDP_HDR_SIZE 8
 #define HDR_SIZE IP_HDR_SIZE + UDP_HDR_SIZE
 
+#define rdma_ping 1
+
 void initCrc(void);
 uint32_t calc_icrc32(char *data, int len);
 
@@ -43,6 +45,7 @@ uint32_t bth_psn = 0;
 uint32_t crc = 0xFFFFFFFF;
 
 int icmp, igmp, other, iphdrlen, ib, ib_conn_req, ib_dconn_req;
+int ready_to_use = 0;
 struct sockaddr saddr;
 struct sockaddr_in source, dest;
 
@@ -56,9 +59,9 @@ struct sockaddr saddr;
 struct sockaddr_in source, dest;
 struct ifreq ifreq_c, ifreq_i, ifreq_ip; /// for each ioctl keep diffrent ifreq structure otherwise error may come in sending(sendto )
 
-//#define INTF "eno2"
+// #define INTF "eno2"
 #define INTF "lo"
-//char INTF[12];
+// char INTF[12];
 
 int total_len = 0, send_len;
 unsigned char *sendbuff;
@@ -496,6 +499,7 @@ void ib_mad_header(unsigned char *buffer, int buflen)
 	{
 		printf("\nReady to use\n");
 		ib++;
+		ready_to_use = 1;
 	}
 
 	// ReadyToUse
@@ -622,6 +626,55 @@ void ib_send_rdma_write_response(unsigned char *buffer, int buflen)
 	SendRoce(data_out, 20);
 }
 
+void ib_send_rdma_read_req(unsigned char *buffer, int buflen)
+{
+	// Input
+	struct ib_base_transport_header *bth_in;
+	struct ib_rdma_extended_transport_header *reth_in;
+
+	// Output
+	struct ib_base_transport_header *bth_out;
+	struct ib_rdma_extended_transport_header *reth_out;
+
+	// Input
+	bth_in = (void *)&buffer[0];
+
+	// Output
+	bth_out = (void *)&data_out[0];
+	reth_out = (void *)&data_out[sizeof(struct ib_base_transport_header)];
+
+	memset(data_out, 0, 20);
+
+	// printf("ib_send_ack : opcode %x", 11);
+	bth_out->opcode = IBV_OPCODE_RC_RDMA_READ_REQUEST;
+	bth_out->se__m__padcnt__tver = 0;
+	bth_out->pkey = ntohs(0xFFFF);
+	bth_out->dest_qp = ntohl(0x11);
+	bth_out->ack__req = 0x80;
+	bth_out->ack__psn = ntohl(0xd63675);
+
+	reth_out->virtual_address = (uint64_t)ntohl(0x00005640) + ((uint64_t)ntohl(0x02374610) << 32);
+	reth_out->remote_key = ntohl(0x000011e2);
+	reth_out->dma_length = ntohl(64);
+
+	SendRoce(data_out, 32);
+}
+
+void ib_rc_rdma_read_response_only(unsigned char *buffer, int buflen)
+{
+	struct udphdr *udp = (struct udphdr *)(buffer + iphdrlen + sizeof(struct ethhdr));
+
+	unsigned char *data = (unsigned char *)(buffer + iphdrlen + sizeof(struct ethhdr) + sizeof(struct udphdr) + sizeof(ib_header));
+	unsigned int length = ntohs(udp->len) - sizeof(struct udphdr) - sizeof(struct ib_base_transport_header) - 4;
+
+	fprintf(log_txt, "\n*************************Infiniband packet*******************");
+	fprintf(log_txt, "\n rdam read response only\n");
+	fprintf(log_txt, "\t|-Lenght                   : %d\n", length);
+	fprintf(log_txt, "*****************************************************************\n\n\n");
+
+	payload(data, length, "rc_send_only");
+}
+
 void udp_header(unsigned char *buffer, int buflen)
 {
 	// fprintf(log_txt, "\n*************************UDP Packet******************************");
@@ -660,6 +713,11 @@ void udp_header(unsigned char *buffer, int buflen)
 			printf("\nIBV_OPCODE_RC_SEND_ONLY\n");
 			ib_rc_send_only(buffer, buflen);
 			ib_send_ack(&buffer[42], buflen);
+			break;
+
+		case IBV_OPCODE_RD_RDMA_READ_RESPONSE_ONLY:
+			printf("\nIBV_OPCODE_RD_RDMA_READ_RESPONSE_ONLY\n");
+			ib_rc_rdma_read_response_only(&buffer[42], buflen);
 			break;
 
 		case IBV_OPCODE_RDMA_READ_REQUEST:
@@ -951,12 +1009,62 @@ int raw_socket()
 			SendRoce(data_out, 280);
 			return 0;
 		}
+
+		if (ready_to_use == 1)
+		{
+			ready_to_use = 0;
+
+			if (rdma_ping)
+			{
+				ib_send_rdma_read_req(&buffer[42], buflen);
+			}
+		}
 	}
 
 	// close(sock_r);// use signals to close socket
 }
 
-void usage() 
+int DummySocket(int PortNr)
+{
+	int sock_fd, saddr_len, buflen;
+	struct sockaddr_in servaddr, cliaddr;
+
+	unsigned char *buffer = (unsigned char *)malloc(65536);
+	memset(buffer, 0, 65536);
+
+	printf("starting .... \n");
+
+	sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (sock_fd < 0)
+	{
+		printf("error in socket\n");
+		return -1;
+	}
+	memset(&servaddr, 0, sizeof(servaddr));
+	memset(&cliaddr, 0, sizeof(cliaddr));
+
+	// Filling server information 
+	servaddr.sin_family = AF_INET; // IPv4 
+	servaddr.sin_addr.s_addr = INADDR_ANY;
+	servaddr.sin_port = htons(PortNr);
+
+	// Bind the socket with the server address 
+	if (bind(sock_fd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0)
+	{
+		perror("bind failed");
+		exit(EXIT_FAILURE);
+	}
+	int len, n;
+	len = sizeof(cliaddr); // len is value/result 
+
+	// while (1)
+	// {
+	// 	n = recvfrom(sock_fd, (char *)buffer, MAXLINE,
+	// 				 MSG_WAITALL, (struct sockaddr *)&cliaddr, &len);
+	// // sendto(sock_fd, (const char *)hello, strlen(hello), MSG_CONFIRM, (const struct sockaddr *)&cliaddr, len);
+}
+
+void usage()
 {
 	printf("Usage:\n");
 	printf("udp_server: [-n device]\n");
@@ -964,19 +1072,18 @@ void usage()
 }
 
 // Driver code
-int main(int argc, char **argv) 
+int main(int argc, char **argv)
 {
 	int ret, option;
 
-	//strcpy(INTF, "lo");
-
+	// strcpy(INTF, "lo");
 
 	while ((option = getopt(argc, argv, "a:p:")) != -1)
 	{
 		switch (option)
 		{
 		case 'n':
-			//strcpy(INTF,optarg);
+			// strcpy(INTF,optarg);
 			/* Remember, this will overwrite the port info */
 			break;
 		default:
@@ -985,8 +1092,7 @@ int main(int argc, char **argv)
 		}
 	}
 
-	printf ("\nUsing network if %s\n",INTF);
-
+	printf("\nUsing network if %s\n", INTF);
 
 	initCrc();
 
@@ -1002,9 +1108,10 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
+	DummySocket(PORT); // Prevent ICMP messages
 	raw_socket();
 
-	//fclose(log_txt);
+	// fclose(log_txt);
 
 	return 0;
 }

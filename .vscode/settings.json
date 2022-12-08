@@ -1,6 +1,9 @@
 {
     "cmake.sourceDirectory": "${workspaceFolder}/udp_receiver",
     "files.associations": {
-        "ref_packets.h": "c"
+        "ref_packets.h": "c",
+        "kd.h": "c",
+        "termios.h": "c",
+        "io.h": "c"
     }
 }
