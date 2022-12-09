@@ -60,7 +60,7 @@ EQUALS = =
 CMAKE_SOURCE_DIR = /home/sander/SoftRoce/udp_receiver
 
 # The top-level build directory on which CMake was run.
-CMAKE_BINARY_DIR = /home/sander/SoftRoce/udp_receiver
+CMAKE_BINARY_DIR = /home/sander/SoftRoce/build
 
 #=============================================================================
 # Targets provided globally by CMake.
@@ -87,9 +87,9 @@ rebuild_cache/fast: rebuild_cache
 
 # The main all target
 all: cmake_check_build_system
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/sander/SoftRoce/udp_receiver/CMakeFiles /home/sander/SoftRoce/udp_receiver//CMakeFiles/progress.marks
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/sander/SoftRoce/build/CMakeFiles /home/sander/SoftRoce/build//CMakeFiles/progress.marks
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 all
-	$(CMAKE_COMMAND) -E cmake_progress_start /home/sander/SoftRoce/udp_receiver/CMakeFiles 0
+	$(CMAKE_COMMAND) -E cmake_progress_start /home/sander/SoftRoce/build/CMakeFiles 0
 .PHONY : all
 
 # The main clean target

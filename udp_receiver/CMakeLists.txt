@@ -2,6 +2,8 @@
 
 project (udp_receiver)
 
+cmake_minimum_required(VERSION 3.4)
+
 set(PROJECT_SOURCE_DIR ${CMAKE_SOURCE_DIR}/src)
 set(CMAKE_BINARY_DIR ${CMAKE_SOURCE_DIR}/bin)
 set(EXECUTABLE_OUTPUT_PATH ${CMAKE_BINARY_DIR})

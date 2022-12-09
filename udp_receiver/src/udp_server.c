@@ -1,5 +1,3 @@
-#include "udp_server.h"
-// Server side implementation of UDP client-server model
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -35,7 +33,8 @@
 #define UDP_HDR_SIZE 8
 #define HDR_SIZE IP_HDR_SIZE + UDP_HDR_SIZE
 
-#define rdma_ping 1
+int rdma_ping = 0;
+int rdma_send = 0;
 
 void initCrc(void);
 uint32_t calc_icrc32(char *data, int len);
@@ -43,6 +42,8 @@ uint32_t calc_icrc32(char *data, int len);
 // BTH
 uint32_t bth_psn = 0;
 uint32_t crc = 0xFFFFFFFF;
+
+uint32_t starting_psn = 0;
 
 int icmp, igmp, other, iphdrlen, ib, ib_conn_req, ib_dconn_req;
 int ready_to_use = 0;
@@ -59,8 +60,22 @@ struct sockaddr saddr;
 struct sockaddr_in source, dest;
 struct ifreq ifreq_c, ifreq_i, ifreq_ip; /// for each ioctl keep diffrent ifreq structure otherwise error may come in sending(sendto )
 
+uint32_t local_qpn = 0;
+
+struct rping_rdma_info
+{
+	uint64_t buf;
+	uint32_t rkey;
+	uint32_t size;
+};
+
+uint32_t remote_key;
+uint64_t virtual_addr;
+uint32_t len;
+
 // #define INTF "eno2"
-#define INTF "lo"
+// #define INTF "lo"
+#define INTF "wlo1"
 // char INTF[12];
 
 int total_len = 0, send_len;
@@ -130,6 +145,7 @@ void ib_send_rep(char *data_in, char *data_out)
 	mad_out->attribute_id = htons(0x13);
 	mad_out->attribute_modifier = mad_in->attribute_modifier;
 
+	local_qpn = req->ib_req_params_1.local_qpn;
 	rep->local_comm_id = ntohl(0x1234);
 	rep->remote_comm_id = req->local_comm_id;
 	rep->local_q_key = ntohl(0x0);
@@ -459,12 +475,17 @@ void ib_extended_transport_header(unsigned char *buffer, int buflen)
 
 void ib_request(unsigned char *buffer, int buflen)
 {
-	struct ib_req *req = (struct ib_req *)(buffer + iphdrlen + sizeof(struct ethhdr) + sizeof(struct udphdr) + sizeof(ib_header) + sizeof(struct ib_datagram_extended_transport_header) + sizeof(struct ib_management_datagram_field));
+	struct ib_req *req = (struct ib_req *)(buffer + iphdrlen + sizeof(struct ethhdr) + sizeof(struct udphdr) + sizeof(struct ib_base_transport_header) + sizeof(struct ib_datagram_extended_transport_header) + sizeof(struct ib_management_datagram_field));
 
 	fprintf(log_txt, "\n*************************Infiniband packet*******************");
 	fprintf(log_txt, "\n Connect request\n");
 	fprintf(log_txt, "\t|-Local Communication ID   : %x\n", ntohs(req->local_comm_id));
+	fprintf(log_txt, "\t|-Starting PSN             : %x\n", req->ib_req_params_4.starting_psn);
 	fprintf(log_txt, "*****************************************************************\n\n\n");
+
+	local_qpn = req->q_key;
+	starting_psn = be32toh(req->ib_req_params_4.starting_psn) >> 8;
+	printf("Starting psn %x, %d\n", starting_psn, starting_psn);
 }
 
 void ib_mad_header(unsigned char *buffer, int buflen)
@@ -515,7 +536,7 @@ void ib_rc_send_only(unsigned char *buffer, int buflen)
 {
 	struct udphdr *udp = (struct udphdr *)(buffer + iphdrlen + sizeof(struct ethhdr));
 
-	unsigned char *data = (unsigned char *)(buffer + iphdrlen + sizeof(struct ethhdr) + sizeof(struct udphdr) + sizeof(ib_header));
+	unsigned char *data = (unsigned char *)(buffer + iphdrlen + sizeof(struct ethhdr) + sizeof(struct udphdr) + sizeof(struct ib_base_transport_header));
 	unsigned int length = ntohs(udp->len) - sizeof(struct udphdr) - sizeof(struct ib_base_transport_header) - 4;
 
 	fprintf(log_txt, "\n*************************Infiniband packet*******************");
@@ -524,6 +545,43 @@ void ib_rc_send_only(unsigned char *buffer, int buflen)
 	fprintf(log_txt, "*****************************************************************\n\n\n");
 
 	payload(data, length, "rc_send_only");
+
+	struct rping_rdma_info *rpinfo = (struct rping_rdma_info *)data;
+
+	printf("addr = %lx\n", rpinfo->buf);
+	printf("key  = %x\n", rpinfo->rkey);
+	printf("len  = %x\n", rpinfo->size);
+
+	remote_key = ntohl(rpinfo->rkey);
+	virtual_addr = be64toh(rpinfo->buf);
+	len = be32toh(rpinfo->size);
+}
+
+void ib_send_only(unsigned char *buffer, int buflen)
+{
+	printf("ib_send_only\n");
+	// Output
+	struct ib_base_transport_header *bth_out;
+	struct rping_rdma_info *rping;
+
+	// Output
+	bth_out = (void *)&data_out[0];
+	rping = (void *)&data_out[sizeof(struct ib_base_transport_header)];
+
+	rping->buf = htobe64(0x1234);
+	rping->rkey = htobe32(0x1234);
+	rping->size = htobe32(0x64);
+
+	// printf("ib_send_ack : opcode %x", 11);
+	bth_out->opcode = IBV_OPCODE_RC_SEND_ONLY;
+	bth_out->se__m__padcnt__tver = 0x00;
+	bth_out->pkey = 0xFFFF;
+	bth_out->dest_qp = local_qpn << 8;
+	bth_out->ack__req = 0x80;
+	bth_out->ack__psn = htonl(starting_psn << 8);
+	starting_psn++;
+
+	SendRoce(data_out, sizeof(struct ib_base_transport_header) + sizeof(struct rping_rdma_info)+4);
 }
 
 void ib_send_ack(unsigned char *buffer, int buflen)
@@ -649,13 +707,15 @@ void ib_send_rdma_read_req(unsigned char *buffer, int buflen)
 	bth_out->opcode = IBV_OPCODE_RC_RDMA_READ_REQUEST;
 	bth_out->se__m__padcnt__tver = 0;
 	bth_out->pkey = ntohs(0xFFFF);
-	bth_out->dest_qp = ntohl(0x11);
+	bth_out->dest_qp = local_qpn << 8;
 	bth_out->ack__req = 0x80;
-	bth_out->ack__psn = ntohl(0xd63675);
+	bth_out->ack__psn = htonl(starting_psn << 8);
+	printf("psn %x, %d\n", starting_psn, starting_psn);
+	starting_psn++;
 
-	reth_out->virtual_address = (uint64_t)ntohl(0x00005640) + ((uint64_t)ntohl(0x02374610) << 32);
-	reth_out->remote_key = ntohl(0x000011e2);
-	reth_out->dma_length = ntohl(64);
+	reth_out->virtual_address = htobe64(virtual_addr);
+	reth_out->remote_key = htobe32(remote_key);
+	reth_out->dma_length = htobe32(len);
 
 	SendRoce(data_out, 32);
 }
@@ -699,34 +759,42 @@ void udp_header(unsigned char *buffer, int buflen)
 		switch (Opcode)
 		{
 		case IBV_OPCODE_UC_SEND_ONLY:
-			// printf("\nIBV_OPCODE_UC_SEND_ONLY\n");
+			printf("IBV_OPCODE_UC_SEND_ONLY\n");
 			// ib_extended_transport_header(buffer, buflen);
 			// ib_mad_header(buffer, buflen);
 			// break;
 		case IBV_OPCODE_UD_SEND_ONLY:
-			printf("\nIBV_OPCODE_UD_SEND_ONLY\n");
+			printf("IBV_OPCODE_UD_SEND_ONLY\n");
 			ib_extended_transport_header(buffer, buflen);
 			ib_mad_header(buffer, buflen);
 			break;
 
 		case IBV_OPCODE_RC_SEND_ONLY:
-			printf("\nIBV_OPCODE_RC_SEND_ONLY\n");
+			printf("IBV_OPCODE_RC_SEND_ONLY\n");
 			ib_rc_send_only(buffer, buflen);
 			ib_send_ack(&buffer[42], buflen);
+			rdma_ping = 1;
 			break;
 
 		case IBV_OPCODE_RD_RDMA_READ_RESPONSE_ONLY:
-			printf("\nIBV_OPCODE_RD_RDMA_READ_RESPONSE_ONLY\n");
-			ib_rc_rdma_read_response_only(&buffer[42], buflen);
+			printf("IBV_OPCODE_RD_RDMA_READ_RESPONSE_ONLY\n");
+			// ib_rc_rdma_read_response_only(&buffer[42], buflen);
+			// rdma_send = 1;
+			break;
+
+		case IBV_OPCODE_RC_RDMA_READ_RESPONSE_ONLY:
+			printf("IBV_OPCODE_RC_RDMA_READ_RESPONSE_ONLY\n");
+			// ib_rc_rdma_read_response_only(&buffer[42], buflen);
+			rdma_send = 1;
 			break;
 
 		case IBV_OPCODE_RDMA_READ_REQUEST:
-			printf("\nIBV_OPCODE_RDMA_READ_REQUEST\n");
-			ib_send_rdma_read_response(&buffer[42], buflen);
+			printf("IBV_OPCODE_RDMA_READ_REQUEST\n");
+			// ib_send_rdma_read_response(&buffer[42], buflen);
 			break;
 
 		case IBV_OPCODE_RDMA_WRITE_ONLY:
-			printf("\nIBV_OPCODE_RDMA_WRITE_ONLY\n");
+			printf("IBV_OPCODE_RDMA_WRITE_ONLY\n");
 			ib_send_rdma_write_response(&buffer[42], buflen);
 			break;
 
@@ -928,7 +996,7 @@ int SendRoce(unsigned char *buffer, int buflen)
 	sadr_ll.sll_halen = ETH_ALEN;
 
 	// Set dest MAC adddres
-	memcpy(sadr_ll.sll_addr, src_mac, sizeof(sadr_ll.sll_addr));
+	memcpy(sadr_ll.sll_addr, src_mac, sizeof(src_mac)); // Size ?
 
 	// InserCrc
 	InsertIcrc(sendbuff, total_len);
@@ -944,9 +1012,50 @@ int SendRoce(unsigned char *buffer, int buflen)
 	}
 }
 
+
+/*
+ * These states are used to signal events between the completion handler
+ * and the main client or server thread.
+ *
+ * Once CONNECTED, they cycle through RDMA_READ_ADV, RDMA_WRITE_ADV, 
+ * and RDMA_WRITE_COMPLETE for each ping.
+ */
+enum test_state {
+	IDLE = 1,
+	CONNECT_REQUEST,
+	ADDR_RESOLVED,
+	ROUTE_RESOLVED,
+	CONNECTED,
+	RDMA_READ_ADV,
+	RDMA_READ_COMPLETE,
+	RDMA_WRITE_ADV,
+	RDMA_WRITE_COMPLETE,
+	DISCONNECTED,
+	ERROR
+};
+	enum test_state state;		/* used for cond/signalling */
+
+/*
+ * rping "ping/pong" loop:
+ * 	client sends source rkey/addr/len
+ *	server receives source rkey/add/len
+ *	server rdma reads "ping" data from source
+ * 	server sends "go ahead" on rdma read completion
+ *	client sends sink rkey/addr/len
+ * 	server receives sink rkey/addr/len
+ * 	server rdma writes "pong" data to sink
+ * 	server sends "go ahead" on rdma write completion
+ * 	<repeat loop>
+ */
+
+
 int raw_socket()
 {
 	int sock_r, saddr_len, buflen;
+	int message_nr = 0;
+
+	state = IDLE;
+
 
 	unsigned char *buffer = (unsigned char *)malloc(65536);
 	memset(buffer, 0, 65536);
@@ -966,6 +1075,7 @@ int raw_socket()
 
 		memset(buffer, 0, 65536);
 		buflen = recvfrom(sock_r, buffer, 65536, 0, &saddr, (socklen_t *)&saddr_len);
+		message_nr++;
 
 		if (buflen < 0)
 		{
@@ -973,6 +1083,20 @@ int raw_socket()
 			return -1;
 		}
 		fflush(log_txt);
+
+		struct iphdr *ip = (struct iphdr *)(buffer + sizeof(struct ethhdr));
+
+		if (ip->saddr == ip->daddr) {
+			//printf("Skipping %d\n", message_nr);
+			continue;
+		}
+
+		if (ip->daddr != 0x15b2a8c0) {
+			//printf("Skipping dadr %d %x\n", message_nr,ip->daddr);
+			continue;
+		}
+
+		printf("Processing %d\n",message_nr);
 
 		// Process incomming data
 		data_process(buffer, buflen);
@@ -1013,15 +1137,22 @@ int raw_socket()
 		if (ready_to_use == 1)
 		{
 			ready_to_use = 0;
+		}
 
-			if (rdma_ping)
-			{
-				ib_send_rdma_read_req(&buffer[42], buflen);
-			}
+		if (rdma_ping)
+		{
+			rdma_ping = 0;
+			sleep(1);
+			ib_send_rdma_read_req(&buffer[42], buflen);
+		}
+
+		if (rdma_send)
+		{
+			rdma_send = 0;
+			sleep(1);
+			ib_send_only(&buffer[42], buflen);
 		}
 	}
-
-	// close(sock_r);// use signals to close socket
 }
 
 int DummySocket(int PortNr)
@@ -1108,7 +1239,7 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	DummySocket(PORT); // Prevent ICMP messages
+	// DummySocket(PORT); // Prevent ICMP messages
 	raw_socket();
 
 	// fclose(log_txt);

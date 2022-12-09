@@ -91,4 +91,5 @@ static uint32_t widmask (p_cm_t);
 /* Returns a longword whose value is (2^p_cm->cm_width)-1.     */
 /* The trick is to do this portably (e.g. without doing <<32). */
 
-#endif  // _CRC32_H_
+// _CRC32_H_
+#endif  
