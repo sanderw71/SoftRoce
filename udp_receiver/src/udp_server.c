@@ -56,6 +56,9 @@ char data_out[MAXLINE];
 char dest_mac[6];
 char src_mac[6];
 
+char ping_buffer[MAXLINE];
+char ping_size = 0;
+
 struct sockaddr saddr;
 struct sockaddr_in source, dest;
 struct ifreq ifreq_c, ifreq_i, ifreq_ip; /// for each ioctl keep diffrent ifreq structure otherwise error may come in sending(sendto )
@@ -75,8 +78,8 @@ uint32_t len;
 
 // #define INTF "eno2"
 // #define INTF "lo"
-#define INTF "wlo1"
-// char INTF[12];
+// #define INTF "wlo1"
+char INTF[12];
 
 int total_len = 0, send_len;
 unsigned char *sendbuff;
@@ -88,6 +91,8 @@ unsigned char *sendbuff;
 #define DESTMAC5 0x8f
 
 int SendRoce(unsigned char *buffer, int buflen);
+
+uint8_t LastOpcode;
 
 struct roce_input_msg
 {
@@ -548,16 +553,14 @@ void ib_rc_send_only(unsigned char *buffer, int buflen)
 
 	struct rping_rdma_info *rpinfo = (struct rping_rdma_info *)data;
 
-	printf("addr = %lx\n", rpinfo->buf);
-	printf("key  = %x\n", rpinfo->rkey);
-	printf("len  = %x\n", rpinfo->size);
-
 	remote_key = ntohl(rpinfo->rkey);
 	virtual_addr = be64toh(rpinfo->buf);
 	len = be32toh(rpinfo->size);
+
+	printf("addr = 0x%lx, rkey 0x%x, len = %d\n", virtual_addr,remote_key,len);
 }
 
-void ib_send_only(unsigned char *buffer, int buflen)
+void ib_send_only(unsigned char *buffer, int buflen, uint32_t key, uint64_t addr, uint32_t len)
 {
 	printf("ib_send_only\n");
 	// Output
@@ -568,9 +571,12 @@ void ib_send_only(unsigned char *buffer, int buflen)
 	bth_out = (void *)&data_out[0];
 	rping = (void *)&data_out[sizeof(struct ib_base_transport_header)];
 
-	rping->buf = htobe64(0x1234);
-	rping->rkey = htobe32(0x1234);
-	rping->size = htobe32(0x64);
+	// rping->rkey = htonl(remote_key);
+	// rping->buf = htobe64(virtual_addr);
+	// rping->size = htobe32(len);
+	rping->rkey = htonl(key);
+	rping->buf = htobe64(addr);
+	rping->size = htobe32(len);
 
 	// printf("ib_send_ack : opcode %x", 11);
 	bth_out->opcode = IBV_OPCODE_RC_SEND_ONLY;
@@ -581,7 +587,40 @@ void ib_send_only(unsigned char *buffer, int buflen)
 	bth_out->ack__psn = htonl(starting_psn << 8);
 	starting_psn++;
 
-	SendRoce(data_out, sizeof(struct ib_base_transport_header) + sizeof(struct rping_rdma_info)+4);
+	SendRoce(data_out, sizeof(struct ib_base_transport_header) + sizeof(struct rping_rdma_info) + 4);
+}
+
+void ib_rdma_write_only(unsigned char *buffer, int buflen, uint32_t key, uint64_t addr, uint32_t len)
+{
+	printf("rdma_write_only len = %d \n",buflen);
+
+	// Output
+	struct ib_base_transport_header *bth_out;
+	struct ib_rdma_extended_transport_header *reth_out;
+
+	// Output
+	bth_out = (void *)&data_out[0];
+	reth_out = (void *)&data_out[sizeof(struct ib_base_transport_header)];
+
+	int data = buflen;
+	memset(data_out, 0, 12 + 16 + data);
+
+	// printf("ib_send_ack : opcode %x", 11);
+	bth_out->opcode = IBV_OPCODE_RDMA_WRITE_ONLY;
+	bth_out->se__m__padcnt__tver = 0x00; // bth_in->se__m__padcnt__tver;
+	bth_out->pkey = 0xFFFF;
+	bth_out->dest_qp = local_qpn << 8;
+	bth_out->ack__req = 0x80;
+	bth_out->ack__psn = htonl(starting_psn << 8);
+	starting_psn++;
+
+	reth_out->remote_key = htonl(key);
+	reth_out->virtual_address = htobe64(addr);
+	reth_out->dma_length = htobe32(len);
+
+	memcpy(&data_out[12 + 16], buffer, buflen);
+
+	SendRoce(data_out, 12 + 16 + data + 4) ;
 }
 
 void ib_send_ack(unsigned char *buffer, int buflen)
@@ -722,17 +761,20 @@ void ib_send_rdma_read_req(unsigned char *buffer, int buflen)
 
 void ib_rc_rdma_read_response_only(unsigned char *buffer, int buflen)
 {
-	struct udphdr *udp = (struct udphdr *)(buffer + iphdrlen + sizeof(struct ethhdr));
+	struct udphdr *udp = (struct udphdr *)(buffer + sizeof(struct iphdr) + sizeof(struct ethhdr));
 
-	unsigned char *data = (unsigned char *)(buffer + iphdrlen + sizeof(struct ethhdr) + sizeof(struct udphdr) + sizeof(ib_header));
-	unsigned int length = ntohs(udp->len) - sizeof(struct udphdr) - sizeof(struct ib_base_transport_header) - 4;
+	unsigned char *data = (unsigned char *)(buffer + sizeof(struct iphdr) + sizeof(struct ethhdr) + sizeof(struct udphdr) + sizeof(struct ib_base_transport_header) + sizeof(struct ib_ack_extended_transport_header));
+	unsigned int length = ntohs(udp->len) - sizeof(struct udphdr) - sizeof(struct ib_base_transport_header) - sizeof(struct ib_ack_extended_transport_header) - sizeof(struct ib_ack_extended_transport_header);
 
 	fprintf(log_txt, "\n*************************Infiniband packet*******************");
-	fprintf(log_txt, "\n rdam read response only\n");
+	fprintf(log_txt, "\n rdma read response only\n");
 	fprintf(log_txt, "\t|-Lenght                   : %d\n", length);
 	fprintf(log_txt, "*****************************************************************\n\n\n");
 
-	payload(data, length, "rc_send_only");
+	payload(data, length, "ib_rc_rdma_read_response_only");
+	printf("copy ping buffer %d\n", length);
+	memcpy(ping_buffer, data, length);
+	ping_size = length;
 }
 
 void udp_header(unsigned char *buffer, int buflen)
@@ -755,6 +797,9 @@ void udp_header(unsigned char *buffer, int buflen)
 	{
 		IcrcCheck();
 		uint8_t Opcode = ib_header(buffer, buflen);
+		LastOpcode = Opcode;
+
+		printf("udp_with_opcode %d\n", LastOpcode);
 
 		switch (Opcode)
 		{
@@ -784,7 +829,7 @@ void udp_header(unsigned char *buffer, int buflen)
 
 		case IBV_OPCODE_RC_RDMA_READ_RESPONSE_ONLY:
 			printf("IBV_OPCODE_RC_RDMA_READ_RESPONSE_ONLY\n");
-			// ib_rc_rdma_read_response_only(&buffer[42], buflen);
+			ib_rc_rdma_read_response_only(buffer, buflen);
 			rdma_send = 1;
 			break;
 
@@ -1012,15 +1057,15 @@ int SendRoce(unsigned char *buffer, int buflen)
 	}
 }
 
-
 /*
  * These states are used to signal events between the completion handler
  * and the main client or server thread.
  *
- * Once CONNECTED, they cycle through RDMA_READ_ADV, RDMA_WRITE_ADV, 
+ * Once CONNECTED, they cycle through RDMA_READ_ADV, RDMA_WRITE_ADV,
  * and RDMA_WRITE_COMPLETE for each ping.
  */
-enum test_state {
+enum test_state
+{
 	IDLE = 1,
 	CONNECT_REQUEST,
 	ADDR_RESOLVED,
@@ -1033,7 +1078,7 @@ enum test_state {
 	DISCONNECTED,
 	ERROR
 };
-	enum test_state state;		/* used for cond/signalling */
+enum test_state state; /* used for cond/signalling */
 
 /*
  * rping "ping/pong" loop:
@@ -1048,14 +1093,12 @@ enum test_state {
  * 	<repeat loop>
  */
 
-
 int raw_socket()
 {
 	int sock_r, saddr_len, buflen;
 	int message_nr = 0;
 
 	state = IDLE;
-
 
 	unsigned char *buffer = (unsigned char *)malloc(65536);
 	memset(buffer, 0, 65536);
@@ -1086,72 +1129,154 @@ int raw_socket()
 
 		struct iphdr *ip = (struct iphdr *)(buffer + sizeof(struct ethhdr));
 
-		if (ip->saddr == ip->daddr) {
-			//printf("Skipping %d\n", message_nr);
+		if (ip->saddr == ip->daddr)
+		{
+			// printf("Skipping %d\n", message_nr);
 			continue;
 		}
 
-		if (ip->daddr != 0x15b2a8c0) {
-			//printf("Skipping dadr %d %x\n", message_nr,ip->daddr);
+		if (ip->daddr != (0xb2a8c0 + (13 << 24)))
+		{
+			// if (ip->saddr != 0xae25a8c0) {
+			// printf("Skipping dadr %d %x\n", message_nr,ip->daddr);
 			continue;
 		}
 
-		printf("Processing %d\n",message_nr);
+		//printf("Processing %d\n", message_nr);
 
 		// Process incomming data
 		data_process(buffer, buflen);
 
 		// Send reply
-		if (ib_conn_req == 1)
-		{
-			ib_conn_req = 0;
-			printf("Connect Request\n");
-			// CheckIcrc(buffer, buflen);
+		// if (ib_conn_req == 1)
+		// {
+		// 	ib_conn_req = 0;
+		// 	printf("Connect Request\n");
 
-			// Create and send reply message
-			ib_send_rep(&buffer[42], data_out);
-			SendRoce(data_out, 280);
+		// 	// Create and send reply message
+		// 	ib_send_rep(&buffer[42], data_out);
+		// 	SendRoce(data_out, 280);
+		// }
 
-#ifdef DEBUG
-			// Compare payload with ref
-			for (int i = 0, n = 0; i < sizeof(connect_reply_payload_packet_bytes); i++)
-			{
-				if (connect_reply_payload_packet_bytes[i] != (unsigned char)data_out[i])
-				{
-					printf("[%3d - %.3X] %.2X %.2X\n", i, i + 42, connect_reply_payload_packet_bytes[i], (unsigned char)data_out[i]);
-				}
-			}
-#endif
-		}
 		// Send reply
-		if (ib_dconn_req == 1)
-		{
-			ib_conn_req = 0;
-			printf("Disconnect Request\n");
+		// if (ib_dconn_req == 1)
+		// {
+		// 	ib_conn_req = 0;
+		// 	printf("Disconnect Request\n");
 
+		// 	ib_disconnect_rep(&buffer[42], data_out);
+		// 	SendRoce(data_out, 280);
+		// 	return 0;
+		// }
+
+		// if (ready_to_use == 1)
+		// {
+		// 	ready_to_use = 0;
+		// }
+
+		// if (rdma_ping)
+		// {
+		// 	rdma_ping = 0;
+		// 	sleep(1);
+		// 	ib_send_rdma_read_req(&buffer[42], buflen);
+		// }
+
+		// if (rdma_send)
+		//{
+		//	rdma_send = 0;
+		//	sleep(1);
+		//		ib_send_only(&buffer[42], buflen);
+		// }
+
+		if (ib_dconn_req)
+		{
 			ib_disconnect_rep(&buffer[42], data_out);
 			SendRoce(data_out, 280);
 			return 0;
 		}
 
-		if (ready_to_use == 1)
+		printf("State %d, Lastopcode %d\n", state, LastOpcode);
+		switch (state)
 		{
-			ready_to_use = 0;
-		}
+		case IDLE:
+			printf("State = IDLE\n");
+			if (ib_conn_req == 1)
+			{
+				ib_conn_req = 0;
+				printf("Connect Request\n");
 
-		if (rdma_ping)
-		{
-			rdma_ping = 0;
-			sleep(1);
-			ib_send_rdma_read_req(&buffer[42], buflen);
-		}
+				// Create and send reply message
+				ib_send_rep(&buffer[42], data_out);
+				SendRoce(data_out, 280);
+			}
+			if (ready_to_use == 1)
+			{
+				ready_to_use = 0;
+				state = CONNECTED;
+			}
 
-		if (rdma_send)
-		{
-			rdma_send = 0;
-			sleep(1);
-			ib_send_only(&buffer[42], buflen);
+			break;
+		case CONNECTED:
+			printf("State = CONNECTED\n");
+			if (rdma_ping)
+			{
+				rdma_ping = 0;
+				sleep(1);
+				ib_send_rdma_read_req(&buffer[42], buflen);
+				state = RDMA_READ_ADV;
+			}
+
+			if (ib_dconn_req == 1)
+			{
+				ib_conn_req = 0;
+				printf("Disconnect Request\n");
+
+				ib_disconnect_rep(&buffer[42], data_out);
+				SendRoce(data_out, 280);
+				return 0;
+			}
+			break;
+		case RDMA_READ_ADV:
+			printf("State = RDMA_READ_ADV\n");
+			if (LastOpcode == IBV_OPCODE_RC_RDMA_READ_RESPONSE_ONLY)
+			{
+				state = RDMA_READ_COMPLETE;
+				printf("ib_send_only \n");
+				ib_send_only(&buffer[42], buflen, 0, 0, 0);
+			}
+			break;
+		case RDMA_READ_COMPLETE:
+			printf("State = RDMA_READ_COMPLETE\n");
+			if (LastOpcode == IBV_OPCODE_RC_ACKNOWLEDGE)
+			{
+				printf("State = RDMA_READ_COMPLETE\n");
+				sleep(1);
+				state = RDMA_WRITE_ADV;
+			}
+			break;
+		case RDMA_WRITE_ADV:
+			printf("State = RDMA_WRITE_ADV\n");
+			if (LastOpcode == IBV_OPCODE_RC_SEND_ONLY)
+			{
+				printf("RDMA Write %d\n", ping_size);
+				sleep(1);
+				ib_rdma_write_only(ping_buffer, ping_size, remote_key, virtual_addr, len);
+				state = RDMA_WRITE_COMPLETE;
+			}
+			break;
+		case RDMA_WRITE_COMPLETE:
+			printf("State = RDMA_WRITE_COMPLETE\n");
+			if (LastOpcode == IBV_OPCODE_RC_ACKNOWLEDGE)
+			{
+				printf("RDMA Write done\n");
+				sleep(1);
+				ib_send_only(&buffer[42], buflen, 0, 0, 0);
+			}
+			break;
+		default:
+			break;
 		}
+		LastOpcode = 0;
 	}
 }
 
@@ -1207,14 +1332,15 @@ int main(int argc, char **argv)
 {
 	int ret, option;
 
-	// strcpy(INTF, "lo");
+	strcpy(INTF, "lo");
 
-	while ((option = getopt(argc, argv, "a:p:")) != -1)
+	while ((option = getopt(argc, argv, "n:a:p:")) != -1)
 	{
 		switch (option)
 		{
 		case 'n':
-			// strcpy(INTF,optarg);
+			strcpy(INTF, optarg);
+			// printf("Netowrk %s\n",optarg);
 			/* Remember, this will overwrite the port info */
 			break;
 		default:
@@ -1239,7 +1365,7 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	// DummySocket(PORT); // Prevent ICMP messages
+	DummySocket(PORT); // Prevent ICMP messages
 	raw_socket();
 
 	// fclose(log_txt);
