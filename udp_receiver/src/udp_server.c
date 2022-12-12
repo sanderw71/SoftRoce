@@ -34,8 +34,8 @@
 #define IP_HDR_SIZE 20
 #define UDP_HDR_SIZE 8
 #define HDR_SIZE IP_HDR_SIZE + UDP_HDR_SIZE
+#define ICRC_SIZE	4
 
-int rdma_ping = 0;
 int rdma_send = 0;
 
 void initCrc(void);
@@ -85,12 +85,6 @@ char INTF[12];
 
 int total_len = 0, send_len;
 unsigned char *sendbuff;
-#define DESTMAC0 0xd0
-#define DESTMAC1 0x67
-#define DESTMAC2 0xe5
-#define DESTMAC3 0x12
-#define DESTMAC4 0x6f
-#define DESTMAC5 0x8f
 
 int SendRoce(unsigned char *buffer, int buflen);
 
@@ -573,9 +567,6 @@ void ib_send_only(unsigned char *buffer, int buflen, uint32_t key, uint64_t addr
 	bth_out = (void *)&data_out[0];
 	rping = (void *)&data_out[sizeof(struct ib_base_transport_header)];
 
-	// rping->rkey = htonl(remote_key);
-	// rping->buf = htobe64(virtual_addr);
-	// rping->size = htobe32(len);
 	rping->rkey = htonl(key);
 	rping->buf = htobe64(addr);
 	rping->size = htobe32(len);
@@ -589,7 +580,7 @@ void ib_send_only(unsigned char *buffer, int buflen, uint32_t key, uint64_t addr
 	bth_out->ack__psn = htonl(starting_psn << 8);
 	starting_psn++;
 
-	SendRoce(data_out, sizeof(struct ib_base_transport_header) + sizeof(struct rping_rdma_info) + 4);
+	SendRoce(data_out, sizeof(struct ib_base_transport_header) + sizeof(struct rping_rdma_info) + ICRC_SIZE);
 }
 
 void ib_rdma_write_only(unsigned char *buffer, int buflen, uint32_t key, uint64_t addr, uint32_t len)
@@ -607,7 +598,6 @@ void ib_rdma_write_only(unsigned char *buffer, int buflen, uint32_t key, uint64_
 	int data = buflen;
 	memset(data_out, 0, 12 + 16 + data);
 
-	// printf("ib_send_ack : opcode %x", 11);
 	bth_out->opcode = IBV_OPCODE_RDMA_WRITE_ONLY;
 	bth_out->se__m__padcnt__tver = 0x00; // bth_in->se__m__padcnt__tver;
 	bth_out->pkey = 0xFFFF;
@@ -641,9 +631,8 @@ void ib_send_ack(unsigned char *buffer, int buflen)
 	bth_out = (void *)&data_out[0];
 	aeth_out = (void *)&data_out[sizeof(struct ib_base_transport_header)];
 
-	memset(data_out, 0, 20);
+	memset(data_out, 0, 16 + ICRC_SIZE);
 
-	// printf("ib_send_ack : opcode %x", 11);
 	bth_out->opcode = IBV_OPCODE_ACKNOWLEDGE;
 	bth_out->se__m__padcnt__tver = bth_in->se__m__padcnt__tver;
 	bth_out->pkey = bth_in->pkey;
@@ -654,7 +643,7 @@ void ib_send_ack(unsigned char *buffer, int buflen)
 	aeth_out->Syndrome = 0x1F;
 	aeth_out->Message_Sequence_Number = 0x010000; // TODO correct
 
-	SendRoce(data_out, 20);
+	SendRoce(data_out, 16 + ICRC_SIZE);
 }
 
 void ib_send_rdma_read_response(unsigned char *buffer, int buflen)
@@ -676,7 +665,7 @@ void ib_send_rdma_read_response(unsigned char *buffer, int buflen)
 	aeth_out = (void *)&data_out[sizeof(struct ib_base_transport_header)];
 
 	int data = ntohl(reth_in->dma_length);
-	memset(data_out, 0, 20 + data);
+	memset(data_out, 0, 16 + ICRC_SIZE + data);
 
 	// printf("ib_send_ack : opcode %x", 11);
 	bth_out->opcode = IBV_OPCODE_RDMA_READ_RESPONSE_ONLY;
@@ -689,7 +678,7 @@ void ib_send_rdma_read_response(unsigned char *buffer, int buflen)
 	aeth_out->Syndrome = 0x1F;
 	aeth_out->Message_Sequence_Number = 0x010000; // TODO correct
 
-	SendRoce(data_out, 20 + data);
+	SendRoce(data_out, 16 + ICRC_SIZE + data);
 }
 
 void ib_send_rdma_write_response(unsigned char *buffer, int buflen)
@@ -709,7 +698,7 @@ void ib_send_rdma_write_response(unsigned char *buffer, int buflen)
 	bth_out = (void *)&data_out[0];
 	aeth_out = (void *)&data_out[sizeof(struct ib_base_transport_header)];
 
-	memset(data_out, 0, 20);
+	memset(data_out, 0, 16 + ICRC_SIZE);
 
 	// printf("ib_send_ack : opcode %x", 11);
 	bth_out->opcode = IBV_OPCODE_ACKNOWLEDGE;
@@ -722,7 +711,7 @@ void ib_send_rdma_write_response(unsigned char *buffer, int buflen)
 	aeth_out->Syndrome = 0x1F;
 	aeth_out->Message_Sequence_Number = 0x010000; // TODO correct
 
-	SendRoce(data_out, 20);
+	SendRoce(data_out, 16 + ICRC_SIZE);
 }
 
 void ib_send_rdma_read_req(unsigned char *buffer, int buflen)
@@ -742,7 +731,7 @@ void ib_send_rdma_read_req(unsigned char *buffer, int buflen)
 	bth_out = (void *)&data_out[0];
 	reth_out = (void *)&data_out[sizeof(struct ib_base_transport_header)];
 
-	memset(data_out, 0, 20);
+	memset(data_out, 0, 28 + ICRC_SIZE);
 
 	// printf("ib_send_ack : opcode %x", 11);
 	bth_out->opcode = IBV_OPCODE_RC_RDMA_READ_REQUEST;
@@ -758,7 +747,7 @@ void ib_send_rdma_read_req(unsigned char *buffer, int buflen)
 	reth_out->remote_key = htobe32(remote_key);
 	reth_out->dma_length = htobe32(len);
 
-	SendRoce(data_out, 32);
+	SendRoce(data_out, 28 + ICRC_SIZE);
 }
 
 void ib_rc_rdma_read_response_only(unsigned char *buffer, int buflen)
@@ -820,7 +809,6 @@ void udp_header(unsigned char *buffer, int buflen)
 			printf("IBV_OPCODE_RC_SEND_ONLY\n");
 			ib_rc_send_only(buffer, buflen);
 			ib_send_ack(&buffer[42], buflen);
-			rdma_ping = 1;
 			break;
 
 		case IBV_OPCODE_RD_RDMA_READ_RESPONSE_ONLY:
@@ -1144,51 +1132,8 @@ int raw_socket()
 			continue;
 		}
 
-		//printf("Processing %d\n", message_nr);
-
 		// Process incomming data
 		data_process(buffer, buflen);
-
-		// Send reply
-		// if (ib_conn_req == 1)
-		// {
-		// 	ib_conn_req = 0;
-		// 	printf("Connect Request\n");
-
-		// 	// Create and send reply message
-		// 	ib_send_rep(&buffer[42], data_out);
-		// 	SendRoce(data_out, 280);
-		// }
-
-		// Send reply
-		// if (ib_dconn_req == 1)
-		// {
-		// 	ib_conn_req = 0;
-		// 	printf("Disconnect Request\n");
-
-		// 	ib_disconnect_rep(&buffer[42], data_out);
-		// 	SendRoce(data_out, 280);
-		// 	return 0;
-		// }
-
-		// if (ready_to_use == 1)
-		// {
-		// 	ready_to_use = 0;
-		// }
-
-		// if (rdma_ping)
-		// {
-		// 	rdma_ping = 0;
-		// 	sleep(1);
-		// 	ib_send_rdma_read_req(&buffer[42], buflen);
-		// }
-
-		// if (rdma_send)
-		//{
-		//	rdma_send = 0;
-		//	sleep(1);
-		//		ib_send_only(&buffer[42], buflen);
-		// }
 
 		if (ib_dconn_req)
 		{
@@ -1220,9 +1165,8 @@ int raw_socket()
 			break;
 		case CONNECTED:
 			printf("State = CONNECTED\n");
-			if (rdma_ping)
+			if (LastOpcode == IBV_OPCODE_RC_SEND_ONLY)
 			{
-				rdma_ping = 0;
 				sleep(DELAY);
 				ib_send_rdma_read_req(&buffer[42], buflen);
 				state = RDMA_READ_ADV;
@@ -1273,6 +1217,7 @@ int raw_socket()
 				printf("RDMA Write done\n");
 				sleep(DELAY);
 				ib_send_only(&buffer[42], buflen, 0, 0, 0);
+				state = CONNECTED;
 			}
 			break;
 		default:
