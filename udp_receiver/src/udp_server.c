@@ -24,6 +24,8 @@
 #include "ref_packets.h"
 #include "opcode.h"
 
+#define DELAY	0
+
 // ROCE Server port
 #define SPORT 55410
 #define PORT 4791
@@ -1221,7 +1223,7 @@ int raw_socket()
 			if (rdma_ping)
 			{
 				rdma_ping = 0;
-				sleep(1);
+				sleep(DELAY);
 				ib_send_rdma_read_req(&buffer[42], buflen);
 				state = RDMA_READ_ADV;
 			}
@@ -1250,7 +1252,7 @@ int raw_socket()
 			if (LastOpcode == IBV_OPCODE_RC_ACKNOWLEDGE)
 			{
 				printf("State = RDMA_READ_COMPLETE\n");
-				sleep(1);
+				sleep(DELAY);
 				state = RDMA_WRITE_ADV;
 			}
 			break;
@@ -1259,7 +1261,7 @@ int raw_socket()
 			if (LastOpcode == IBV_OPCODE_RC_SEND_ONLY)
 			{
 				printf("RDMA Write %d\n", ping_size);
-				sleep(1);
+				sleep(DELAY);
 				ib_rdma_write_only(ping_buffer, ping_size, remote_key, virtual_addr, len);
 				state = RDMA_WRITE_COMPLETE;
 			}
@@ -1269,7 +1271,7 @@ int raw_socket()
 			if (LastOpcode == IBV_OPCODE_RC_ACKNOWLEDGE)
 			{
 				printf("RDMA Write done\n");
-				sleep(1);
+				sleep(DELAY);
 				ib_send_only(&buffer[42], buflen, 0, 0, 0);
 			}
 			break;
