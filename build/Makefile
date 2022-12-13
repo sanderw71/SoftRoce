@@ -166,29 +166,29 @@ src/crc32.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/udp_server.dir/build.make CMakeFiles/udp_server.dir/src/crc32.c.s
 .PHONY : src/crc32.c.s
 
-src/crc_check.o: src/crc_check.c.o
-.PHONY : src/crc_check.o
+src/net_utils.o: src/net_utils.c.o
+.PHONY : src/net_utils.o
 
 # target to build an object file
-src/crc_check.c.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/udp_server.dir/build.make CMakeFiles/udp_server.dir/src/crc_check.c.o
-.PHONY : src/crc_check.c.o
+src/net_utils.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/udp_server.dir/build.make CMakeFiles/udp_server.dir/src/net_utils.c.o
+.PHONY : src/net_utils.c.o
 
-src/crc_check.i: src/crc_check.c.i
-.PHONY : src/crc_check.i
+src/net_utils.i: src/net_utils.c.i
+.PHONY : src/net_utils.i
 
 # target to preprocess a source file
-src/crc_check.c.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/udp_server.dir/build.make CMakeFiles/udp_server.dir/src/crc_check.c.i
-.PHONY : src/crc_check.c.i
+src/net_utils.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/udp_server.dir/build.make CMakeFiles/udp_server.dir/src/net_utils.c.i
+.PHONY : src/net_utils.c.i
 
-src/crc_check.s: src/crc_check.c.s
-.PHONY : src/crc_check.s
+src/net_utils.s: src/net_utils.c.s
+.PHONY : src/net_utils.s
 
 # target to generate assembly for a file
-src/crc_check.c.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/udp_server.dir/build.make CMakeFiles/udp_server.dir/src/crc_check.c.s
-.PHONY : src/crc_check.c.s
+src/net_utils.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/udp_server.dir/build.make CMakeFiles/udp_server.dir/src/net_utils.c.s
+.PHONY : src/net_utils.c.s
 
 src/udp_client.o: src/udp_client.c.o
 .PHONY : src/udp_client.o
@@ -251,9 +251,9 @@ help:
 	@echo "... src/crc32.o"
 	@echo "... src/crc32.i"
 	@echo "... src/crc32.s"
-	@echo "... src/crc_check.o"
-	@echo "... src/crc_check.i"
-	@echo "... src/crc_check.s"
+	@echo "... src/net_utils.o"
+	@echo "... src/net_utils.i"
+	@echo "... src/net_utils.s"
 	@echo "... src/udp_client.o"
 	@echo "... src/udp_client.i"
 	@echo "... src/udp_client.s"

@@ -21,20 +21,20 @@
 #include "crc32.h"
 #include "ib.h"
 
-#include "ref_packets.h"
 #include "opcode.h"
 
-#define DELAY	0
+#include "net_utils.h"
+
+#define DELAY 0
 
 // ROCE Server port
-#define SPORT 55410
-#define PORT 4791
+#define RDMA_PORT 4791
 #define MAXLINE 1500
 
 #define IP_HDR_SIZE 20
 #define UDP_HDR_SIZE 8
 #define HDR_SIZE IP_HDR_SIZE + UDP_HDR_SIZE
-#define ICRC_SIZE	4
+#define ICRC_SIZE 4
 
 int rdma_send = 0;
 
@@ -62,8 +62,8 @@ char ping_buffer[MAXLINE];
 char ping_size = 0;
 
 struct sockaddr saddr;
-struct sockaddr_in source, dest;
-struct ifreq ifreq_c, ifreq_i, ifreq_ip; /// for each ioctl keep diffrent ifreq structure otherwise error may come in sending(sendto )
+struct sockaddr_in source;
+struct sockaddr_in dest;
 
 uint32_t local_qpn = 0;
 
@@ -78,13 +78,43 @@ uint32_t remote_key;
 uint64_t virtual_addr;
 uint32_t len;
 
-// #define INTF "eno2"
-// #define INTF "lo"
-// #define INTF "wlo1"
 char INTF[12];
 
-int total_len = 0, send_len;
-unsigned char *sendbuff;
+/*
+ * rping "ping/pong" loop:
+ * 	client sends source rkey/addr/len
+ *	server receives source rkey/add/len
+ *	server rdma reads "ping" data from source
+ * 	server sends "go ahead" on rdma read completion
+ *	client sends sink rkey/addr/len
+ * 	server receives sink rkey/addr/len
+ * 	server rdma writes "pong" data to sink
+ * 	server sends "go ahead" on rdma write completion
+ * 	<repeat loop>
+ */
+
+/*
+ * These states are used to signal events between the completion handler
+ * and the main client or server thread.
+ *
+ * Once CONNECTED, they cycle through RDMA_READ_ADV, RDMA_WRITE_ADV,
+ * and RDMA_WRITE_COMPLETE for each ping.
+ */
+enum test_state
+{
+	IDLE = 1,
+	CONNECT_REQUEST,
+	ADDR_RESOLVED,
+	ROUTE_RESOLVED,
+	CONNECTED,
+	RDMA_READ_ADV,
+	RDMA_READ_COMPLETE,
+	RDMA_WRITE_ADV,
+	RDMA_WRITE_COMPLETE,
+	DISCONNECTED,
+	ERROR
+};
+enum test_state state; /* used for cond/signalling */
 
 int SendRoce(unsigned char *buffer, int buflen);
 
@@ -229,132 +259,12 @@ void ib_disconnect_rep(char *data_in, char *data_out)
 	rep->local_ca_guid = 0x02155dfffe240104;
 }
 
-uint16_t IpHdrChecksum(struct iphdr *hdr)
-{
-	union _iphdr
-	{
-		struct iphdr hdr;
-		uint16_t data[10];
-	};
-
-	union _iphdr ip;
-
-	// Copy data into payload
-	memcpy(ip.data, hdr, 20);
-
-	uint32_t Checksum = 0;
-
-	for (int i = 0; i < 10; i++)
-	{
-		if (i == 5)
-		{
-			continue;
-		}
-		Checksum += ip.data[i];
-	}
-
-	Checksum = (Checksum & 0xFFFF) + ((Checksum & 0xFFFF0000) >> 16);
-	Checksum = Checksum ^ 0x0000FFFF;
-
-	return (uint16_t)Checksum;
-}
-
 int CheckIcrc(unsigned char *buffer, int buflen)
 {
 	uint32_t icrc = calc_icrc32(buffer, buflen);
 	uint32_t *ptr = (uint32_t *)&buffer[buflen - 4];
 	printf("CheckIcrc %x = %x\n", *ptr, icrc);
 	return (*ptr == icrc);
-}
-
-int InsertIcrc(unsigned char *buffer, int buflen)
-{
-	uint32_t icrc = calc_icrc32(buffer, buflen);
-	uint32_t *ptr = (uint32_t *)&buffer[buflen - 4];
-	*ptr = icrc;
-	return 0;
-}
-
-/// @brief Check IP Header calculation function
-/// @return
-uint16_t IpHdrCheck()
-{
-	uint16_t ReferenceCrc, CalulatedCrc;
-
-	// Check IP CRC
-	ReferenceCrc = (ExampleIPhdr[10] + (ExampleIPhdr[11] << 8));
-	CalulatedCrc = IpHdrChecksum((struct iphdr *)&ExampleIPhdr[0]);
-	if (ReferenceCrc != CalulatedCrc)
-	{
-		printf("1: Checksum error ref %x != %x\n", ReferenceCrc, CalulatedCrc);
-		return 1;
-	}
-
-	ReferenceCrc = (connect_req_packet_bytes[24] + (connect_req_packet_bytes[25] << 8));
-	CalulatedCrc = IpHdrChecksum((struct iphdr *)&connect_req_packet_bytes[14]);
-	if (ReferenceCrc != CalulatedCrc)
-	{
-		printf("2: Checksum error ref %x != %x\n", ReferenceCrc, CalulatedCrc);
-		return 1;
-	}
-
-	ReferenceCrc = (connect_reply_packet_bytes[24] + (connect_reply_packet_bytes[25] << 8));
-	CalulatedCrc = IpHdrChecksum((struct iphdr *)&connect_reply_packet_bytes[14]);
-	if (ReferenceCrc != CalulatedCrc)
-	{
-		printf("3: Checksum error ref %x != %x\n", ReferenceCrc, CalulatedCrc);
-		return 1;
-	}
-
-	return 0;
-}
-
-/// @brief Check Icrc calculation
-/// @return 0 is succes
-uint16_t IcrcCheck()
-{
-	// Check iCRC calculation
-	uint32_t crc = calc_icrc32((char *)connect_req_packet_bytes, sizeof(connect_req_packet_bytes));
-	uint32_t *ptr = (uint32_t *)&connect_req_packet_bytes[sizeof(connect_req_packet_bytes) - 4];
-	if (*ptr != crc)
-	{
-		printf("1: iCRC Checksum error ref %x != %x\n", *ptr, crc);
-		// return 1;
-	}
-
-	// Check iCRC calculation
-	crc = calc_icrc32(connect_reply_packet_bytes, sizeof(connect_reply_packet_bytes));
-	ptr = (uint32_t *)&connect_reply_packet_bytes[sizeof(connect_reply_packet_bytes) - 4];
-	if (*ptr != crc)
-	{
-		printf("2: iCRC Checksum error ref %x != %x\n", *ptr, crc);
-		// return 1;
-	}
-
-	// Check CRC insertion
-	unsigned char buffer[sizeof(connect_req_packet_bytes)];
-	memcpy(&buffer, connect_req_packet_bytes, sizeof(connect_req_packet_bytes) - 4);
-	InsertIcrc(buffer, sizeof(buffer));
-
-	for (int i = sizeof(connect_req_packet_bytes) - 4, n = 0; i < sizeof(connect_req_packet_bytes); i++)
-	{
-		if (connect_req_packet_bytes[i] != buffer[i])
-		{
-			printf("3: iCRC Checksum error ref loc = %d %x != %x\n", i, connect_req_packet_bytes[i], buffer[i]);
-		}
-	}
-	return 0;
-}
-
-/// @brief Perform function checks
-/// @return
-uint16_t Checking()
-{
-	if (IpHdrCheck() != 0)
-		return 1;
-	if (IcrcCheck() != 0)
-		return 2;
-	return 0;
 }
 
 int Process(struct roce_input_msg *roce_in, int len)
@@ -533,7 +443,10 @@ void ib_mad_header(unsigned char *buffer, int buflen)
 	}
 }
 
-void ib_rc_send_only(unsigned char *buffer, int buflen)
+/// @brief Reliable Connection Send Only (incomming message)
+/// @param buffer
+/// @param buflen
+void ib_rc_send_only_rx(unsigned char *buffer, int buflen)
 {
 	struct udphdr *udp = (struct udphdr *)(buffer + iphdrlen + sizeof(struct ethhdr));
 
@@ -541,7 +454,7 @@ void ib_rc_send_only(unsigned char *buffer, int buflen)
 	unsigned int length = ntohs(udp->len) - sizeof(struct udphdr) - sizeof(struct ib_base_transport_header) - 4;
 
 	fprintf(log_txt, "\n*************************Infiniband packet*******************");
-	fprintf(log_txt, "\n ib_rc_send_only\n");
+	fprintf(log_txt, "\n ib_rc_send_only_rx\n");
 	fprintf(log_txt, "\t|-Lenght                   : %d\n", length);
 	fprintf(log_txt, "*****************************************************************\n\n\n");
 
@@ -553,9 +466,15 @@ void ib_rc_send_only(unsigned char *buffer, int buflen)
 	virtual_addr = be64toh(rpinfo->buf);
 	len = be32toh(rpinfo->size);
 
-	printf("addr = 0x%lx, rkey 0x%x, len = %d\n", virtual_addr,remote_key,len);
+	printf("[ib_rc_send_only_rx] addr = 0x%lx, rkey 0x%x, len = %d\n", virtual_addr, remote_key, len);
 }
 
+/// @brief Infiniband Send Only
+/// @param buffer
+/// @param buflen
+/// @param key
+/// @param addr
+/// @param len
 void ib_send_only(unsigned char *buffer, int buflen, uint32_t key, uint64_t addr, uint32_t len)
 {
 	printf("ib_send_only\n");
@@ -585,7 +504,7 @@ void ib_send_only(unsigned char *buffer, int buflen, uint32_t key, uint64_t addr
 
 void ib_rdma_write_only(unsigned char *buffer, int buflen, uint32_t key, uint64_t addr, uint32_t len)
 {
-	printf("rdma_write_only len = %d \n",buflen);
+	printf("rdma_write_only len = %d \n", buflen);
 
 	// Output
 	struct ib_base_transport_header *bth_out;
@@ -612,7 +531,7 @@ void ib_rdma_write_only(unsigned char *buffer, int buflen, uint32_t key, uint64_
 
 	memcpy(&data_out[12 + 16], buffer, buflen);
 
-	SendRoce(data_out, 12 + 16 + data + 4) ;
+	SendRoce(data_out, 12 + 16 + data + 4);
 }
 
 void ib_send_ack(unsigned char *buffer, int buflen)
@@ -770,7 +689,7 @@ void ib_rc_rdma_read_response_only(unsigned char *buffer, int buflen)
 
 void udp_header(unsigned char *buffer, int buflen)
 {
-	// fprintf(log_txt, "\n*************************UDP Packet******************************");
+	fprintf(log_txt, "\n*************************UDP Packet******************************");
 	ethernet_header(buffer, buflen);
 	ip_header(buffer, buflen);
 	fprintf(log_txt, "\nUDP Header\n");
@@ -784,9 +703,9 @@ void udp_header(unsigned char *buffer, int buflen)
 	// payload(buffer,buflen);
 
 	fprintf(log_txt, "*****************************************************************\n\n\n");
-	if (ntohs(udp->dest) == PORT)
+	if (ntohs(udp->dest) == RDMA_PORT)
 	{
-		IcrcCheck();
+		// IcrcCheck();
 		uint8_t Opcode = ib_header(buffer, buflen);
 		LastOpcode = Opcode;
 
@@ -807,7 +726,7 @@ void udp_header(unsigned char *buffer, int buflen)
 
 		case IBV_OPCODE_RC_SEND_ONLY:
 			printf("IBV_OPCODE_RC_SEND_ONLY\n");
-			ib_rc_send_only(buffer, buflen);
+			ib_rc_send_only_rx(buffer, buflen);
 			ib_send_ack(&buffer[42], buflen);
 			break;
 
@@ -857,12 +776,11 @@ void data_process(unsigned char *buffer, int buflen)
 		break;
 	case 6:
 		++tcp;
-		// tcp_header(buffer,buflen);
 		break;
 
 	case 17:
 		++udp;
-		if (ntohs(ud->dest) == PORT)
+		if (ntohs(ud->dest) == RDMA_PORT)
 		{
 			// Only process IB packets
 			udp_header(buffer, buflen);
@@ -877,223 +795,21 @@ void data_process(unsigned char *buffer, int buflen)
 #endif
 }
 
-void get_eth_index(int sock_raw)
-{
-	memset(&ifreq_i, 0, sizeof(ifreq_i));
-	strncpy(ifreq_i.ifr_name, INTF, IFNAMSIZ - 1);
-
-	if ((ioctl(sock_raw, SIOCGIFINDEX, &ifreq_i)) < 0)
-		printf("error in index ioctl reading");
-
-	// printf("index=%d\n", ifreq_i.ifr_ifindex);
-}
-
-void get_mac(int sock_raw)
-{
-	memset(&ifreq_c, 0, sizeof(ifreq_c));
-	strncpy(ifreq_c.ifr_name, INTF, IFNAMSIZ - 1);
-
-	if ((ioctl(sock_raw, SIOCGIFHWADDR, &ifreq_c)) < 0)
-		printf("error in SIOCGIFHWADDR ioctl reading");
-
-	// printf("Mac= %.2X-%.2X-%.2X-%.2X-%.2X-%.2X\n", (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[0]), (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[1]), (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[2]), (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[3]), (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[4]), (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[5]));
-
-	// printf("ethernet packaging start ... \n");
-
-	struct ethhdr *eth = (struct ethhdr *)(sendbuff);
-	// eth->h_dest[0] = eth->h_source[0];
-	// eth->h_dest[1] = eth->h_source[1];
-	// eth->h_dest[2] = eth->h_source[2];
-	// eth->h_dest[3] = eth->h_source[3];
-	// eth->h_dest[4] = eth->h_source[4];
-	// eth->h_dest[5] = eth->h_source[5];
-
-	eth->h_source[0] = (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[0]);
-	eth->h_source[1] = (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[1]);
-	eth->h_source[2] = (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[2]);
-	eth->h_source[3] = (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[3]);
-	eth->h_source[4] = (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[4]);
-	eth->h_source[5] = (unsigned char)(ifreq_c.ifr_hwaddr.sa_data[5]);
-
-	memcpy(eth->h_dest, src_mac, sizeof(eth->h_dest));
-
-	// eth->h_dest[0] = DESTMAC0;
-	// eth->h_dest[1] = DESTMAC1;
-	// eth->h_dest[2] = DESTMAC2;
-	// eth->h_dest[3] = DESTMAC3;
-	// eth->h_dest[4] = DESTMAC4;
-	// eth->h_dest[5] = DESTMAC5;
-
-	eth->h_proto = htons(ETH_P_IP); // 0x800
-
-	// printf("ethernet packaging done.\n");
-
-	total_len += sizeof(struct ethhdr);
-}
-
-void get_data()
-{
-	static int len = 10;
-
-	for (int i = 0; i < len; i++)
-	{
-		sendbuff[total_len++] = 0xAA;
-	}
-	sendbuff[total_len++] = 0xBB;
-
-	len += 5;
-}
-
-void get_udp(unsigned char *buffer, int buflen)
-{
-	struct udphdr *uh = (struct udphdr *)(sendbuff + sizeof(struct iphdr) + sizeof(struct ethhdr));
-
-	uh->source = htons(SPORT);
-	uh->dest = htons(PORT);
-	uh->check = 0;
-
-	total_len += sizeof(struct udphdr);
-	// get_data();
-
-	// int HeaderSize = sizeof(struct iphdr) + sizeof(struct ethhdr);
-	for (int i = 0; i < (buflen); i++)
-	{
-		sendbuff[total_len++] = buffer[i];
-	}
-	uh->len = htons((total_len - sizeof(struct iphdr) - sizeof(struct ethhdr)));
-}
-
-unsigned short checksum(unsigned short *buff, int _16bitword)
-{
-	unsigned long sum;
-	for (sum = 0; _16bitword > 0; _16bitword--)
-		sum += htons(*(buff)++);
-	do
-	{
-		sum = ((sum >> 16) + (sum & 0xFFFF));
-	} while (sum & 0xFFFF0000);
-
-	return (~sum);
-}
-
-void get_ip(int sock_raw, unsigned char *buffer, int buflen)
-{
-	memset(&ifreq_ip, 0, sizeof(ifreq_ip));
-	strncpy(ifreq_ip.ifr_name, INTF, IFNAMSIZ - 1);
-	if (ioctl(sock_raw, SIOCGIFADDR, &ifreq_ip) < 0)
-	{
-		printf("error in SIOCGIFADDR \n");
-	}
-
-	printf("%s\n", inet_ntoa((((struct sockaddr_in *)&(ifreq_ip.ifr_addr))->sin_addr)));
-
-	/****** OR
-		int i;
-		for(i=0;i<14;i++)
-		printf("%d\n",(unsigned char)ifreq_ip.ifr_addr.sa_data[i]); ******/
-
-	struct iphdr *iph = (struct iphdr *)(sendbuff + sizeof(struct ethhdr));
-	iph->ihl = 5;
-	iph->version = 4;
-	iph->tos = 16;
-	iph->id = htons(10201);
-	iph->ttl = 64;
-	iph->protocol = 17;
-	iph->saddr = inet_addr(inet_ntoa((((struct sockaddr_in *)&(ifreq_ip.ifr_addr))->sin_addr)));
-	iph->daddr = source.sin_addr.s_addr; //   inet_addr("destination_ip"); // put destination IP address
-	total_len += sizeof(struct iphdr);
-	get_udp(buffer, buflen);
-
-	iph->tot_len = htons(total_len - sizeof(struct ethhdr));
-	iph->check = htons(checksum((unsigned short *)(sendbuff + sizeof(struct ethhdr)), (sizeof(struct iphdr) / 2)));
-}
-
 int SendRoce(unsigned char *buffer, int buflen)
 {
-	int sock_raw = socket(AF_PACKET, SOCK_RAW, IPPROTO_RAW);
-
-	total_len = 0;
-
-	if (sock_raw == -1)
-		printf("error in socket");
-
-	sendbuff = (unsigned char *)malloc(1500); // increase in case of large data.Here data is --> AA  BB  CC  DD  EE
-	memset(sendbuff, 0, 1500);
-
-	get_eth_index(sock_raw); // interface number
-	get_mac(sock_raw);
-	get_ip(sock_raw, buffer, buflen);
-
-	struct ethhdr *eth = (struct ethhdr *)(buffer);
-
-	struct sockaddr_ll sadr_ll;
-	sadr_ll.sll_ifindex = ifreq_i.ifr_ifindex;
-	sadr_ll.sll_halen = ETH_ALEN;
-
-	// Set dest MAC adddres
-	memcpy(sadr_ll.sll_addr, src_mac, sizeof(src_mac)); // Size ?
-
-	// InserCrc
-	InsertIcrc(sendbuff, total_len);
-
-	payload(sendbuff, total_len, "Tx Ethernet Data");
-
-	printf("sending...\n");
-	send_len = sendto(sock_raw, sendbuff, total_len, 0, (const struct sockaddr *)&sadr_ll, sizeof(struct sockaddr_ll));
-	if (send_len < 0)
-	{
-		printf("error in sending....sendlen=%d....errno=%d\n", send_len, errno);
-		return -1;
-	}
+	return SendRaw(buffer, buflen);
 }
-
-/*
- * These states are used to signal events between the completion handler
- * and the main client or server thread.
- *
- * Once CONNECTED, they cycle through RDMA_READ_ADV, RDMA_WRITE_ADV,
- * and RDMA_WRITE_COMPLETE for each ping.
- */
-enum test_state
-{
-	IDLE = 1,
-	CONNECT_REQUEST,
-	ADDR_RESOLVED,
-	ROUTE_RESOLVED,
-	CONNECTED,
-	RDMA_READ_ADV,
-	RDMA_READ_COMPLETE,
-	RDMA_WRITE_ADV,
-	RDMA_WRITE_COMPLETE,
-	DISCONNECTED,
-	ERROR
-};
-enum test_state state; /* used for cond/signalling */
-
-/*
- * rping "ping/pong" loop:
- * 	client sends source rkey/addr/len
- *	server receives source rkey/add/len
- *	server rdma reads "ping" data from source
- * 	server sends "go ahead" on rdma read completion
- *	client sends sink rkey/addr/len
- * 	server receives sink rkey/addr/len
- * 	server rdma writes "pong" data to sink
- * 	server sends "go ahead" on rdma write completion
- * 	<repeat loop>
- */
 
 int raw_socket()
 {
 	int sock_r, saddr_len, buflen;
 	int message_nr = 0;
+	int buffer_size = 65536;
 
 	state = IDLE;
 
-	unsigned char *buffer = (unsigned char *)malloc(65536);
-	memset(buffer, 0, 65536);
-
-	printf("starting .... \n");
+	unsigned char *buffer = (unsigned char *)malloc(buffer_size);
+	memset(buffer, 0, buffer_size);
 
 	sock_r = socket(AF_PACKET, SOCK_RAW, htons(ETH_P_ALL));
 	if (sock_r < 0)
@@ -1102,12 +818,15 @@ int raw_socket()
 		return -1;
 	}
 
+	struct in_addr own_ip_addr = GetIPAddres(INTF);
+	printf("Listining on interface %x\n", own_ip_addr.s_addr);
+
 	while (1)
 	{
 		saddr_len = sizeof saddr;
 
-		memset(buffer, 0, 65536);
-		buflen = recvfrom(sock_r, buffer, 65536, 0, &saddr, (socklen_t *)&saddr_len);
+		memset(buffer, 0, buffer_size);
+		buflen = recvfrom(sock_r, buffer, buffer_size, 0, &saddr, (socklen_t *)&saddr_len);
 		message_nr++;
 
 		if (buflen < 0)
@@ -1119,34 +838,35 @@ int raw_socket()
 
 		struct iphdr *ip = (struct iphdr *)(buffer + sizeof(struct ethhdr));
 
+		// Skip message with eq source and destination address
 		if (ip->saddr == ip->daddr)
 		{
-			// printf("Skipping %d\n", message_nr);
 			continue;
 		}
 
-		if (ip->daddr != (0xb2a8c0 + (13 << 24)))
+		// Filter messages inject by means of the udp_server (echo messages)
+		if (ip->daddr != own_ip_addr.s_addr)
 		{
-			// if (ip->saddr != 0xae25a8c0) {
-			// printf("Skipping dadr %d %x\n", message_nr,ip->daddr);
 			continue;
 		}
 
 		// Process incomming data
 		data_process(buffer, buflen);
 
+		// Always disconnect when this is requested
 		if (ib_dconn_req)
 		{
 			ib_disconnect_rep(&buffer[42], data_out);
 			SendRoce(data_out, 280);
 			return 0;
 		}
-
+#ifdef DEBUG
 		printf("State %d, Lastopcode %d\n", state, LastOpcode);
+#endif
 		switch (state)
 		{
 		case IDLE:
-			printf("State = IDLE\n");
+			// printf("State = IDLE\n");
 			if (ib_conn_req == 1)
 			{
 				ib_conn_req = 0;
@@ -1156,43 +876,33 @@ int raw_socket()
 				ib_send_rep(&buffer[42], data_out);
 				SendRoce(data_out, 280);
 			}
+
 			if (ready_to_use == 1)
 			{
 				ready_to_use = 0;
 				state = CONNECTED;
+				printf("State = CONNECTED\n");
 			}
 
 			break;
 		case CONNECTED:
-			printf("State = CONNECTED\n");
 			if (LastOpcode == IBV_OPCODE_RC_SEND_ONLY)
 			{
+				printf("Start rdma read process\n");
 				sleep(DELAY);
 				ib_send_rdma_read_req(&buffer[42], buflen);
 				state = RDMA_READ_ADV;
 			}
-
-			if (ib_dconn_req == 1)
-			{
-				ib_conn_req = 0;
-				printf("Disconnect Request\n");
-
-				ib_disconnect_rep(&buffer[42], data_out);
-				SendRoce(data_out, 280);
-				return 0;
-			}
 			break;
 		case RDMA_READ_ADV:
-			printf("State = RDMA_READ_ADV\n");
 			if (LastOpcode == IBV_OPCODE_RC_RDMA_READ_RESPONSE_ONLY)
 			{
 				state = RDMA_READ_COMPLETE;
-				printf("ib_send_only \n");
+				printf("rdma read finished, ib_send_only \n");
 				ib_send_only(&buffer[42], buflen, 0, 0, 0);
 			}
 			break;
 		case RDMA_READ_COMPLETE:
-			printf("State = RDMA_READ_COMPLETE\n");
 			if (LastOpcode == IBV_OPCODE_RC_ACKNOWLEDGE)
 			{
 				printf("State = RDMA_READ_COMPLETE\n");
@@ -1201,7 +911,6 @@ int raw_socket()
 			}
 			break;
 		case RDMA_WRITE_ADV:
-			printf("State = RDMA_WRITE_ADV\n");
 			if (LastOpcode == IBV_OPCODE_RC_SEND_ONLY)
 			{
 				printf("RDMA Write %d\n", ping_size);
@@ -1211,7 +920,6 @@ int raw_socket()
 			}
 			break;
 		case RDMA_WRITE_COMPLETE:
-			printf("State = RDMA_WRITE_COMPLETE\n");
 			if (LastOpcode == IBV_OPCODE_RC_ACKNOWLEDGE)
 			{
 				printf("RDMA Write done\n");
@@ -1287,8 +995,6 @@ int main(int argc, char **argv)
 		{
 		case 'n':
 			strcpy(INTF, optarg);
-			// printf("Netowrk %s\n",optarg);
-			/* Remember, this will overwrite the port info */
 			break;
 		default:
 			usage();
@@ -1300,11 +1006,6 @@ int main(int argc, char **argv)
 
 	initCrc();
 
-	if (Checking() != 0)
-	{
-		return 0;
-	}
-
 	log_txt = fopen("log.txt", "w");
 	if (!log_txt)
 	{
@@ -1312,7 +1013,7 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
-	DummySocket(PORT); // Prevent ICMP messages
+	DummySocket(RDMA_PORT); // Prevent ICMP messages
 	raw_socket();
 
 	// fclose(log_txt);

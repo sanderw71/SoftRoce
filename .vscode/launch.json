@@ -9,7 +9,7 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/udp_receiver/bin/udp_server",
-            "args": [-n wlo1],
+            "args": ["-n wlo1"],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
             "environment": [],
