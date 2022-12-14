@@ -58,7 +58,7 @@ char data_out[MAXLINE];
 char dest_mac[6];
 char src_mac[6];
 
-char ping_buffer[MAXLINE];
+char ping_buffer[MAXLINE*1000];
 uint16_t ping_size = 0;
 
 struct sockaddr saddr;
@@ -674,7 +674,7 @@ void ib_send_rdma_read_req(unsigned char *buffer, int buflen)
 	SendRoce(data_out, 28 + ICRC_SIZE);
 }
 
-void ib_rc_rdma_read_response_only(unsigned char *buffer, int buflen)
+uint16_t ib_rc_rdma_read_response_only(unsigned char *buffer, int buflen,uint16_t index)
 {
 	struct udphdr *udp = (struct udphdr *)(buffer + sizeof(struct iphdr) + sizeof(struct ethhdr));
 
@@ -684,16 +684,21 @@ void ib_rc_rdma_read_response_only(unsigned char *buffer, int buflen)
 	fprintf(log_txt, "\n*************************Infiniband packet*******************");
 	fprintf(log_txt, "\n rdma read response only\n");
 	fprintf(log_txt, "\t|-Lenght                   : %d\n", length);
+	fprintf(log_txt, "\t|-Index                    : %d\n", index);
 	fprintf(log_txt, "*****************************************************************\n\n\n");
 
 	payload(data, length, "ib_rc_rdma_read_response_only");
 	printf("copy ping buffer %d\n", length);
-	memcpy(ping_buffer, data, length);
+	memcpy(ping_buffer+index, data, length);
 	ping_size = length;
+
+	return length;
 }
 
 void udp_header(unsigned char *buffer, int buflen)
 {
+	static uint16_t index = 0;
+
 	fprintf(log_txt, "\n*************************UDP Packet******************************");
 	ethernet_header(buffer, buflen);
 	ip_header(buffer, buflen);
@@ -743,8 +748,19 @@ void udp_header(unsigned char *buffer, int buflen)
 			break;
 
 		case IBV_OPCODE_RC_RDMA_READ_RESPONSE_ONLY:
+			index = 0;
+		case IBV_OPCODE_RC_RDMA_READ_RESPONSE_FIRST:
+			index = 0;
+		case IBV_OPCODE_RC_RDMA_READ_RESPONSE_LAST:
 			printf("IBV_OPCODE_RC_RDMA_READ_RESPONSE_ONLY\n");
-			ib_rc_rdma_read_response_only(buffer, buflen);
+			index += ib_rc_rdma_read_response_only(buffer, buflen,index);
+			rdma_send = 1;
+			break;
+
+		case IBV_OPCODE_RC_RDMA_READ_RESPONSE_MIDDLE:
+			// This message does not contain the AETH
+			printf("IBV_OPCODE_RC_RDMA_READ_RESPONSE_ONLY\n");
+			index += ib_rc_rdma_read_response_only(buffer, buflen,index);
 			rdma_send = 1;
 			break;
 
@@ -757,9 +773,12 @@ void udp_header(unsigned char *buffer, int buflen)
 			printf("IBV_OPCODE_RDMA_WRITE_ONLY\n");
 			ib_send_rdma_write_response(&buffer[42], buflen);
 			break;
+		case IBV_OPCODE_RC_ACKNOWLEDGE:
+			printf("IBV_OPCODE_RC_ACKNOWLEDGE\n");
+			break;
 
 		default:
-			// printf("\nOpcode = %d\n", Opcode);
+			printf("Unimplemeted Opcode = %d\n", Opcode);
 			break;
 		}
 	}
@@ -864,7 +883,7 @@ int raw_socket()
 		{
 			ib_disconnect_rep(&buffer[42], data_out);
 			SendRoce(data_out, 280);
-			close (sock_r);
+			close(sock_r);
 			return 0;
 		}
 #ifdef DEBUG
@@ -913,6 +932,12 @@ int raw_socket()
 			break;
 		case RDMA_READ_ADV:
 			if (LastOpcode == IBV_OPCODE_RC_RDMA_READ_RESPONSE_ONLY)
+			{
+				state = RDMA_READ_COMPLETE;
+				printf("rdma read finished, ib_send_only \n");
+				ib_send_only(&buffer[42], buflen, 0, 0, 0);
+			}
+			if (LastOpcode == IBV_OPCODE_RC_RDMA_READ_RESPONSE_LAST)
 			{
 				state = RDMA_READ_COMPLETE;
 				printf("rdma read finished, ib_send_only \n");
