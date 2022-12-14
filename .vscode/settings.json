@@ -4,6 +4,7 @@
         "ref_packets.h": "c",
         "kd.h": "c",
         "termios.h": "c",
-        "io.h": "c"
+        "io.h": "c",
+        "cstdio": "c"
     }
 }

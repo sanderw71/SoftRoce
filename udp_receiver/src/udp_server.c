@@ -15,8 +15,8 @@
 
 #include <net/if.h>
 #include <net/ethernet.h> /* the L2 protocols */
-#include <netinet/udp.h>  //Provides declarations for tcp header
-#include <netinet/ip.h>	  //Provides declarations for ip header
+#include <netinet/udp.h>  /* Provides declarations for tcp header */
+#include <netinet/ip.h>	  /* Provides declarations for ip header */
 
 #include "crc32.h"
 #include "ib.h"
@@ -59,7 +59,7 @@ char dest_mac[6];
 char src_mac[6];
 
 char ping_buffer[MAXLINE];
-char ping_size = 0;
+uint16_t ping_size = 0;
 
 struct sockaddr saddr;
 struct sockaddr_in source;
@@ -152,7 +152,9 @@ void ib_send_rep(char *data_in, char *data_out)
 
 	memset(data_out, 0, 280);
 
+#ifdef DEBUG
 	printf("ib_send_rep : opcode %x\n", bth_in->opcode);
+#endif
 	bth_out->opcode = bth_in->opcode;
 	bth_out->se__m__padcnt__tver = bth_in->se__m__padcnt__tver;
 	bth_out->pkey = bth_in->pkey;
@@ -218,7 +220,9 @@ void ib_disconnect_rep(char *data_in, char *data_out)
 
 	memset(data_out, 0, 280);
 
+#ifdef DEBUG
 	printf("ib_send_rep : opcode %x\n", bth_in->opcode);
+#endif
 	bth_out->opcode = bth_in->opcode;
 	bth_out->se__m__padcnt__tver = bth_in->se__m__padcnt__tver;
 	bth_out->pkey = bth_in->pkey;
@@ -466,10 +470,10 @@ void ib_rc_send_only_rx(unsigned char *buffer, int buflen)
 	virtual_addr = be64toh(rpinfo->buf);
 	len = be32toh(rpinfo->size);
 
-	printf("[ib_rc_send_only_rx] addr = 0x%lx, rkey 0x%x, len = %d\n", virtual_addr, remote_key, len);
+	printf("Received key and buffer parameters : addr = 0x%lx, rkey 0x%x, len = %d\n", virtual_addr, remote_key, len);
 }
 
-/// @brief Infiniband Send Only
+/// @brief Infiniband Send Only command
 /// @param buffer
 /// @param buflen
 /// @param key
@@ -477,7 +481,6 @@ void ib_rc_send_only_rx(unsigned char *buffer, int buflen)
 /// @param len
 void ib_send_only(unsigned char *buffer, int buflen, uint32_t key, uint64_t addr, uint32_t len)
 {
-	printf("ib_send_only\n");
 	// Output
 	struct ib_base_transport_header *bth_out;
 	struct rping_rdma_info *rping;
@@ -659,7 +662,9 @@ void ib_send_rdma_read_req(unsigned char *buffer, int buflen)
 	bth_out->dest_qp = local_qpn << 8;
 	bth_out->ack__req = 0x80;
 	bth_out->ack__psn = htonl(starting_psn << 8);
+#ifdef DEBUG
 	printf("psn %x, %d\n", starting_psn, starting_psn);
+#endif
 	starting_psn++;
 
 	reth_out->virtual_address = htobe64(virtual_addr);
@@ -709,8 +714,9 @@ void udp_header(unsigned char *buffer, int buflen)
 		uint8_t Opcode = ib_header(buffer, buflen);
 		LastOpcode = Opcode;
 
+#ifdef DEBUG
 		printf("udp_with_opcode %d\n", LastOpcode);
-
+#endif
 		switch (Opcode)
 		{
 		case IBV_OPCODE_UC_SEND_ONLY:
@@ -819,7 +825,7 @@ int raw_socket()
 	}
 
 	struct in_addr own_ip_addr = GetIPAddres(INTF);
-	printf("Listining on interface %x\n", own_ip_addr.s_addr);
+	printf("Using network interface with name %s and ip address %s [%x]\n", INTF, inet_ntoa(own_ip_addr), own_ip_addr.s_addr);
 
 	while (1)
 	{
@@ -858,6 +864,7 @@ int raw_socket()
 		{
 			ib_disconnect_rep(&buffer[42], data_out);
 			SendRoce(data_out, 280);
+			close (sock_r);
 			return 0;
 		}
 #ifdef DEBUG
@@ -882,6 +889,16 @@ int raw_socket()
 				ready_to_use = 0;
 				state = CONNECTED;
 				printf("State = CONNECTED\n");
+			}
+
+			// Ocasionally the Send and Ready to use command are swapped which results
+			// in a dead lock situation.
+			if (LastOpcode == IBV_OPCODE_RC_SEND_ONLY)
+			{
+				printf("Start rdma read process\n");
+				sleep(DELAY);
+				ib_send_rdma_read_req(&buffer[42], buflen);
+				state = RDMA_READ_ADV;
 			}
 
 			break;
@@ -935,46 +952,6 @@ int raw_socket()
 	}
 }
 
-int DummySocket(int PortNr)
-{
-	int sock_fd, saddr_len, buflen;
-	struct sockaddr_in servaddr, cliaddr;
-
-	unsigned char *buffer = (unsigned char *)malloc(65536);
-	memset(buffer, 0, 65536);
-
-	printf("starting .... \n");
-
-	sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
-	if (sock_fd < 0)
-	{
-		printf("error in socket\n");
-		return -1;
-	}
-	memset(&servaddr, 0, sizeof(servaddr));
-	memset(&cliaddr, 0, sizeof(cliaddr));
-
-	// Filling server information 
-	servaddr.sin_family = AF_INET; // IPv4 
-	servaddr.sin_addr.s_addr = INADDR_ANY;
-	servaddr.sin_port = htons(PortNr);
-
-	// Bind the socket with the server address 
-	if (bind(sock_fd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0)
-	{
-		perror("bind failed");
-		exit(EXIT_FAILURE);
-	}
-	int len, n;
-	len = sizeof(cliaddr); // len is value/result 
-
-	// while (1)
-	// {
-	// 	n = recvfrom(sock_fd, (char *)buffer, MAXLINE,
-	// 				 MSG_WAITALL, (struct sockaddr *)&cliaddr, &len);
-	// // sendto(sock_fd, (const char *)hello, strlen(hello), MSG_CONFIRM, (const struct sockaddr *)&cliaddr, len);
-}
-
 void usage()
 {
 	printf("Usage:\n");
@@ -1002,10 +979,6 @@ int main(int argc, char **argv)
 		}
 	}
 
-	printf("\nUsing network if %s\n", INTF);
-
-	initCrc();
-
 	log_txt = fopen("log.txt", "w");
 	if (!log_txt)
 	{
@@ -1013,10 +986,13 @@ int main(int argc, char **argv)
 		return -1;
 	}
 
+	initCrc();
 	DummySocket(RDMA_PORT); // Prevent ICMP messages
 	raw_socket();
 
-	// fclose(log_txt);
+	printf("Closing log file\n");
+	fclose(log_txt);
+	printf("Bye...\n");
 
 	return 0;
 }

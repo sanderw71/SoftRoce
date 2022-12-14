@@ -19,7 +19,6 @@
 
 #include "crc32.h"
 
-
 int total_len = 0, send_len;
 unsigned char *sendbuff;
 struct ifreq ifreq_c, ifreq_i, ifreq_ip; /// for each ioctl keep diffrent ifreq structure otherwise error may come in sending(sendto )
@@ -46,9 +45,6 @@ struct in_addr GetIPAddres(char *Ifname)
     strcpy(ifr.ifr_name, Ifname);
     ioctl(n, SIOCGIFADDR, &ifr);
     close(n);
-
-    // display result
-    printf("IP Address is %s - %s\n", Ifname, inet_ntoa(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr));
 
     return ((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr;
 }
@@ -162,7 +158,9 @@ void get_ip(int sock_raw, unsigned char *buffer, int buflen)
         printf("error in SIOCGIFADDR \n");
     }
 
-    printf("%s\n", inet_ntoa((((struct sockaddr_in *)&(ifreq_ip.ifr_addr))->sin_addr)));
+#ifdef DEBUG
+    printf("[get_ip] %s\n", inet_ntoa((((struct sockaddr_in *)&(ifreq_ip.ifr_addr))->sin_addr)));
+#endif
 
     /****** OR
         int i;
@@ -213,11 +211,54 @@ int SendRaw(unsigned char *buffer, int buflen)
     // InserCrc
     InsertIcrc(sendbuff, total_len);
 
-    printf("sending...\n");
+#ifdef DEBUG
+    printf("SendRaw ...\n");
+#endif
     send_len = sendto(sock_raw, sendbuff, total_len, 0, (const struct sockaddr *)&sadr_ll, sizeof(struct sockaddr_ll));
     if (send_len < 0)
     {
         printf("error in sending....sendlen=%d....errno=%d\n", send_len, errno);
         return -1;
     }
+    close(sock_raw);
+}
+
+int DummySocket(int PortNr)
+{
+    int sock_fd, saddr_len, buflen;
+    struct sockaddr_in servaddr, cliaddr;
+
+    unsigned char *buffer = (unsigned char *)malloc(65536);
+    memset(buffer, 0, 65536);
+
+    printf("starting .... \n");
+
+    sock_fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sock_fd < 0)
+    {
+        printf("error in socket\n");
+        return -1;
+    }
+    memset(&servaddr, 0, sizeof(servaddr));
+    memset(&cliaddr, 0, sizeof(cliaddr));
+
+    // Filling server information 
+    servaddr.sin_family = AF_INET; // IPv4 
+    servaddr.sin_addr.s_addr = INADDR_ANY;
+    servaddr.sin_port = htons(PortNr);
+
+    // Bind the socket with the server address 
+    if (bind(sock_fd, (const struct sockaddr *)&servaddr, sizeof(servaddr)) < 0)
+    {
+        perror("bind failed");
+        exit(EXIT_FAILURE);
+    }
+    int len, n;
+    len = sizeof(cliaddr); // len is value/result 
+
+    // while (1)
+    // {
+    // 	n = recvfrom(sock_fd, (char *)buffer, MAXLINE,
+    // 				 MSG_WAITALL, (struct sockaddr *)&cliaddr, &len);
+    // // sendto(sock_fd, (const char *)hello, strlen(hello), MSG_CONFIRM, (const struct sockaddr *)&cliaddr, len);
 }

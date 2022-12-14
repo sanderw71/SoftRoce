@@ -55,3 +55,4 @@ dkms.conf
 *.dir
 CMakeFiles
 bin
+udp_receiver/log.txt

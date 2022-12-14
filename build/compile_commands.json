@@ -1,22 +1,22 @@
 [
 {
   "directory": "/home/sander/SoftRoce/build",
-  "command": "/usr/bin/c89-gcc  -I/home/sander/SoftRoce/udp_receiver/src -I/home/atr/local/include -g -g -o CMakeFiles/udp_client.dir/src/udp_client.c.o -c /home/sander/SoftRoce/udp_receiver/src/udp_client.c",
+  "command": "/usr/bin/gcc  -I/home/sander/SoftRoce/udp_receiver/src -I/home/atr/local/include -g -g -o CMakeFiles/udp_client.dir/src/udp_client.c.o -c /home/sander/SoftRoce/udp_receiver/src/udp_client.c",
   "file": "/home/sander/SoftRoce/udp_receiver/src/udp_client.c"
 },
 {
   "directory": "/home/sander/SoftRoce/build",
-  "command": "/usr/bin/c89-gcc  -I/home/sander/SoftRoce/udp_receiver/src -I/home/atr/local/include -g -g -o CMakeFiles/udp_server.dir/src/net_utils.c.o -c /home/sander/SoftRoce/udp_receiver/src/net_utils.c",
+  "command": "/usr/bin/gcc  -I/home/sander/SoftRoce/udp_receiver/src -I/home/atr/local/include -g -g -o CMakeFiles/udp_server.dir/src/net_utils.c.o -c /home/sander/SoftRoce/udp_receiver/src/net_utils.c",
   "file": "/home/sander/SoftRoce/udp_receiver/src/net_utils.c"
 },
 {
   "directory": "/home/sander/SoftRoce/build",
-  "command": "/usr/bin/c89-gcc  -I/home/sander/SoftRoce/udp_receiver/src -I/home/atr/local/include -g -g -o CMakeFiles/udp_server.dir/src/udp_server.c.o -c /home/sander/SoftRoce/udp_receiver/src/udp_server.c",
+  "command": "/usr/bin/gcc  -I/home/sander/SoftRoce/udp_receiver/src -I/home/atr/local/include -g -g -o CMakeFiles/udp_server.dir/src/udp_server.c.o -c /home/sander/SoftRoce/udp_receiver/src/udp_server.c",
   "file": "/home/sander/SoftRoce/udp_receiver/src/udp_server.c"
 },
 {
   "directory": "/home/sander/SoftRoce/build",
-  "command": "/usr/bin/c89-gcc  -I/home/sander/SoftRoce/udp_receiver/src -I/home/atr/local/include -g -g -o CMakeFiles/udp_server.dir/src/crc32.c.o -c /home/sander/SoftRoce/udp_receiver/src/crc32.c",
+  "command": "/usr/bin/gcc  -I/home/sander/SoftRoce/udp_receiver/src -I/home/atr/local/include -g -g -o CMakeFiles/udp_server.dir/src/crc32.c.o -c /home/sander/SoftRoce/udp_receiver/src/crc32.c",
   "file": "/home/sander/SoftRoce/udp_receiver/src/crc32.c"
 }
 ]
