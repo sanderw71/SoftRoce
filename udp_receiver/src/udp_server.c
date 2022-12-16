@@ -36,6 +36,10 @@
 #define HDR_SIZE IP_HDR_SIZE + UDP_HDR_SIZE
 #define ICRC_SIZE 4
 
+#define MAX_PACKET_SIZE 1024;
+
+int max_pkt_size = MAX_PACKET_SIZE;
+
 int rdma_send = 0;
 
 void initCrc(void);
@@ -473,6 +477,30 @@ void ib_rc_send_only_rx(unsigned char *buffer, int buflen)
 	printf("Received key and buffer parameters : addr = 0x%lx, rkey 0x%x, len = %d\n", virtual_addr, remote_key, len);
 }
 
+void insert_base_transport_header(struct ib_base_transport_header *bth_out, uint8_t Opcode, uint8_t Ack_req)
+{
+	bth_out->opcode = Opcode;
+	bth_out->se__m__padcnt__tver = 0x00; // bth_in->se__m__padcnt__tver;
+	bth_out->pkey = 0xFFFF;
+	bth_out->dest_qp = local_qpn << 8;
+	bth_out->ack__req = Ack_req;
+	bth_out->ack__psn = htonl(starting_psn << 8);
+}
+
+void insert_rping_rdma_info(struct rping_rdma_info *rping, uint64_t buf, uint32_t rkey, uint32_t size)
+{
+	rping->rkey = htonl(rkey);
+	rping->buf = htobe64(buf);
+	rping->size = htobe32(size);
+}
+
+void insert_rdma_extended_transport_header(struct ib_rdma_extended_transport_header *reth_out, uint64_t buf, uint32_t rkey, uint32_t size)
+{
+	reth_out->remote_key = htonl(rkey);
+	reth_out->virtual_address = htobe64(buf);
+	reth_out->dma_length = htobe32(size);
+}
+
 /// @brief Infiniband Send Only command
 /// @param buffer
 /// @param buflen
@@ -489,128 +517,90 @@ void ib_send_only(unsigned char *buffer, int buflen, uint32_t key, uint64_t addr
 	bth_out = (void *)&data_out[0];
 	rping = (void *)&data_out[sizeof(struct ib_base_transport_header)];
 
-	rping->rkey = htonl(key);
-	rping->buf = htobe64(addr);
-	rping->size = htobe32(len);
-
-	// printf("ib_send_ack : opcode %x", 11);
-	bth_out->opcode = IBV_OPCODE_RC_SEND_ONLY;
-	bth_out->se__m__padcnt__tver = 0x00;
-	bth_out->pkey = 0xFFFF;
-	bth_out->dest_qp = local_qpn << 8;
-	bth_out->ack__req = 0x80;
-	bth_out->ack__psn = htonl(starting_psn << 8);
+	insert_rping_rdma_info(rping, key, addr, len);
+	insert_base_transport_header(bth_out, IBV_OPCODE_RC_SEND_ONLY, 0x80);
 	starting_psn++;
 
 	SendRoce(data_out, sizeof(struct ib_base_transport_header) + sizeof(struct rping_rdma_info) + ICRC_SIZE);
 }
 
-
 int ib_rdma_write_first(unsigned char *buffer, int buflen, uint32_t key, uint64_t addr, uint32_t len)
 {
-	if (buflen > 1024)
+	if (buflen > max_pkt_size)
 	{
-		buflen = 1024;
+		buflen = max_pkt_size;
 	}
 	printf("rdma_write_first len = %d \n", buflen);
 
-	// Output
-	struct ib_base_transport_header *bth_out;
-	struct ib_rdma_extended_transport_header *reth_out;
+	struct ib_rdma_write_first
+	{
+		struct ib_base_transport_header bth_out;
+		struct ib_rdma_extended_transport_header reth_out;
+		char data[buflen];
+		uint32_t crc;
+	} __attribute__((packed));
 
-	// Output
-	bth_out = (void *)&data_out[0];
-	reth_out = (void *)&data_out[sizeof(struct ib_base_transport_header)];
+	struct ib_rdma_write_first tx_msg;
 
-	int data = buflen;
-	memset(data_out, 0, 12 + 16 + data);
+	memcpy(tx_msg.data, buffer, buflen);
 
-	bth_out->opcode = IBV_OPCODE_RDMA_WRITE_FIRST;
-	bth_out->se__m__padcnt__tver = 0x00; // bth_in->se__m__padcnt__tver;
-	bth_out->pkey = 0xFFFF;
-	bth_out->dest_qp = local_qpn << 8;
-	bth_out->ack__req = 0x00;
-	bth_out->ack__psn = htonl(starting_psn << 8);
+	insert_base_transport_header(&tx_msg.bth_out, IBV_OPCODE_RDMA_WRITE_FIRST, 0x00);
 	starting_psn++;
 
-	reth_out->remote_key = htonl(key);
-	reth_out->virtual_address = htobe64(addr);
-	reth_out->dma_length = htobe32(len);
-
-	memcpy(&data_out[12 + 16], buffer, buflen);
-
-	SendRoce(data_out, 12 + 16 + data + 4);
+	insert_rdma_extended_transport_header(&tx_msg.reth_out, addr, key, len);
+	SendRoce((unsigned char *)&tx_msg, sizeof(struct ib_rdma_write_first));
 
 	return buflen;
 }
 
 int ib_rdma_write_middle(unsigned char *buffer, int buflen, uint32_t key, uint64_t addr, uint32_t len)
 {
-	if (buflen > 1024)
+	if (buflen > max_pkt_size)
 	{
-		buflen = 1024;
+		buflen = max_pkt_size;
 	}
+
 	printf("rdma_write_middle len = %d \n", buflen);
 
-	// Output
-	struct ib_base_transport_header *bth_out;
-	struct ib_rdma_extended_transport_header *reth_out;
+	struct ib_rdma_write_middle
+	{
+		struct ib_base_transport_header bth_out;
+		char data[buflen];
+		uint32_t crc;
+	} __attribute__((packed));
 
-	// Output
-	bth_out = (void *)&data_out[0];
-	reth_out = (void *)&data_out[sizeof(struct ib_base_transport_header)];
+	struct ib_rdma_write_middle tx_msg;
 
-	int data = buflen;
-	memset(data_out, 0, 12 + data);
-
-	bth_out->opcode = IBV_OPCODE_RDMA_WRITE_MIDDLE;
-	bth_out->se__m__padcnt__tver = 0x00; // bth_in->se__m__padcnt__tver;
-	bth_out->pkey = 0xFFFF;
-	bth_out->dest_qp = local_qpn << 8;
-	bth_out->ack__req = 0x00;
-	bth_out->ack__psn = htonl(starting_psn << 8);
+	memcpy(tx_msg.data, buffer, buflen);
+	insert_base_transport_header(&tx_msg.bth_out, IBV_OPCODE_RDMA_WRITE_MIDDLE, 0x00);
 	starting_psn++;
 
-	reth_out->remote_key = htonl(key);
-	reth_out->virtual_address = htobe64(addr);
-	reth_out->dma_length = htobe32(len);
-
-	memcpy(&data_out[12 ], buffer, buflen);
-
-	SendRoce(data_out, 12 + data + 4);
+	SendRoce((unsigned char *)&tx_msg, sizeof(struct ib_rdma_write_middle));
 	return buflen;
 }
 
-void ib_rdma_write_last(unsigned char *buffer, int buflen, uint32_t key, uint64_t addr, uint32_t len)
+int ib_rdma_write_last(unsigned char *buffer, int buflen, uint32_t key, uint64_t addr, uint32_t len)
 {
+	if (buflen > max_pkt_size)
+	{
+		return -1;
+	}
 	printf("rdma_write_last len = %d \n", buflen);
 
-	// Output
-	struct ib_base_transport_header *bth_out;
-	struct ib_rdma_extended_transport_header *reth_out;
+	struct ib_rdma_write_last
+	{
+		struct ib_base_transport_header bth_out;
+		char data[buflen];
+		uint32_t crc;
+	} __attribute__((packed));
 
-	// Output
-	bth_out = (void *)&data_out[0];
-	reth_out = (void *)&data_out[sizeof(struct ib_base_transport_header)];
+	struct ib_rdma_write_last tx_msg;
 
-	int data = buflen;
-	memset(data_out, 0, 12 + data);
-
-	bth_out->opcode = IBV_OPCODE_RDMA_WRITE_LAST;
-	bth_out->se__m__padcnt__tver = 0x00; // bth_in->se__m__padcnt__tver;
-	bth_out->pkey = 0xFFFF;
-	bth_out->dest_qp = local_qpn << 8;
-	bth_out->ack__req = 0x80;
-	bth_out->ack__psn = htonl(starting_psn << 8);
+	memcpy(tx_msg.data, buffer, buflen);
+	insert_base_transport_header(&tx_msg.bth_out, IBV_OPCODE_RDMA_WRITE_LAST, 0x80);
 	starting_psn++;
 
-	reth_out->remote_key = htonl(key);
-	reth_out->virtual_address = htobe64(addr);
-	reth_out->dma_length = htobe32(len);
-
-	memcpy(&data_out[12 ], buffer, buflen);
-
-	SendRoce(data_out, 12 + data + 4);
+	SendRoce((unsigned char *)&tx_msg, sizeof(struct ib_rdma_write_last));
 }
 
 void ib_rdma_write_only(unsigned char *buffer, int buflen, uint32_t key, uint64_t addr, uint32_t len)
@@ -624,135 +614,70 @@ void ib_rdma_write_only(unsigned char *buffer, int buflen, uint32_t key, uint64_
 		{
 			tx_len += ib_rdma_write_middle(&buffer[tx_len], buflen, key, addr, len);
 		}
-		ib_rdma_write_last(&buffer[tx_len], buflen-tx_len, key, addr, len);
+		ib_rdma_write_last(&buffer[tx_len], buflen - tx_len, key, addr, len);
 		return;
 	}
 
-	// Output
-	struct ib_base_transport_header *bth_out;
-	struct ib_rdma_extended_transport_header *reth_out;
+	struct ib_rdma_write_only
+	{
+		struct ib_base_transport_header bth_out;
+		struct ib_rdma_extended_transport_header reth_out;
+		char data[buflen];
+		uint32_t crc;
+	} __attribute__((packed));
 
-	// Output
-	bth_out = (void *)&data_out[0];
-	reth_out = (void *)&data_out[sizeof(struct ib_base_transport_header)];
+	struct ib_rdma_write_only tx_msg;
 
-	int data = buflen;
-	memset(data_out, 0, 12 + 16 + data);
+	memcpy(tx_msg.data, buffer, buflen);
 
-	bth_out->opcode = IBV_OPCODE_RDMA_WRITE_ONLY;
-	bth_out->se__m__padcnt__tver = 0x00; // bth_in->se__m__padcnt__tver;
-	bth_out->pkey = 0xFFFF;
-	bth_out->dest_qp = local_qpn << 8;
-	bth_out->ack__req = 0x80;
-	bth_out->ack__psn = htonl(starting_psn << 8);
+	insert_base_transport_header(&tx_msg.bth_out, IBV_OPCODE_RDMA_WRITE_ONLY, 0x80);
 	starting_psn++;
 
-	reth_out->remote_key = htonl(key);
-	reth_out->virtual_address = htobe64(addr);
-	reth_out->dma_length = htobe32(len);
+	insert_rdma_extended_transport_header(&tx_msg.reth_out, addr, key, len);
+	SendRoce((unsigned char *)&tx_msg, sizeof(struct ib_rdma_write_only));
+}
 
-	memcpy(&data_out[12 + 16], buffer, buflen);
 
-	SendRoce(data_out, 12 + 16 + data + 4);
+void ib_send_ack_with_opcode(unsigned char *buffer, int buflen, uint8_t Opcode)
+{
+	struct ib_send_ack
+	{
+		struct ib_base_transport_header bth_out;
+		struct ib_ack_extended_transport_header aeth_out;
+		uint32_t crc;
+	} __attribute__((packed));
+
+	struct ib_send_ack tx_msg;
+
+	// Input
+	struct ib_base_transport_header *bth_in;
+	bth_in = (void *)&buffer[0];
+
+	insert_base_transport_header(&tx_msg.bth_out, Opcode, 0x00);
+	tx_msg.bth_out.se__m__padcnt__tver = bth_in->se__m__padcnt__tver;
+	tx_msg.bth_out.pkey = bth_in->pkey;
+	tx_msg.bth_out.dest_qp = bth_in->dest_qp;
+	tx_msg.bth_out.ack__psn = bth_in->ack__psn;
+
+	tx_msg.aeth_out.Syndrome = 0x1F;
+	tx_msg.aeth_out.Message_Sequence_Number = 0x010000; // TODO correct
+
+	SendRoce((unsigned char *)&tx_msg, sizeof(struct ib_send_ack));
 }
 
 void ib_send_ack(unsigned char *buffer, int buflen)
 {
-	// Input
-	struct ib_base_transport_header *bth_in;
-
-	// Output
-	struct ib_base_transport_header *bth_out;
-	struct ib_ack_extended_transport_header *aeth_out;
-
-	// Input
-	bth_in = (void *)&buffer[0];
-
-	// Output
-	bth_out = (void *)&data_out[0];
-	aeth_out = (void *)&data_out[sizeof(struct ib_base_transport_header)];
-
-	memset(data_out, 0, 16 + ICRC_SIZE);
-
-	bth_out->opcode = IBV_OPCODE_ACKNOWLEDGE;
-	bth_out->se__m__padcnt__tver = bth_in->se__m__padcnt__tver;
-	bth_out->pkey = bth_in->pkey;
-	bth_out->dest_qp = bth_in->dest_qp;
-	bth_out->ack__req = 0;
-	bth_out->ack__psn = bth_in->ack__psn;
-
-	aeth_out->Syndrome = 0x1F;
-	aeth_out->Message_Sequence_Number = 0x010000; // TODO correct
-
-	SendRoce(data_out, 16 + ICRC_SIZE);
+    ib_send_ack_with_opcode(buffer, buflen, IBV_OPCODE_ACKNOWLEDGE);
 }
 
 void ib_send_rdma_read_response(unsigned char *buffer, int buflen)
 {
-	// Input
-	struct ib_base_transport_header *bth_in;
-	struct ib_rdma_extended_transport_header *reth_in;
-
-	// Output
-	struct ib_base_transport_header *bth_out;
-	struct ib_ack_extended_transport_header *aeth_out;
-
-	// Input
-	bth_in = (void *)&buffer[0];
-	reth_in = (void *)&buffer[sizeof(struct ib_base_transport_header)];
-
-	// Output
-	bth_out = (void *)&data_out[0];
-	aeth_out = (void *)&data_out[sizeof(struct ib_base_transport_header)];
-
-	int data = ntohl(reth_in->dma_length);
-	memset(data_out, 0, 16 + ICRC_SIZE + data);
-
-	// printf("ib_send_ack : opcode %x", 11);
-	bth_out->opcode = IBV_OPCODE_RDMA_READ_RESPONSE_ONLY;
-	bth_out->se__m__padcnt__tver = bth_in->se__m__padcnt__tver;
-	bth_out->pkey = bth_in->pkey;
-	bth_out->dest_qp = bth_in->dest_qp;
-	bth_out->ack__req = 0;
-	bth_out->ack__psn = bth_in->ack__psn;
-
-	aeth_out->Syndrome = 0x1F;
-	aeth_out->Message_Sequence_Number = 0x010000; // TODO correct
-
-	SendRoce(data_out, 16 + ICRC_SIZE + data);
+    ib_send_ack_with_opcode(buffer, buflen, IBV_OPCODE_RDMA_READ_RESPONSE_ONLY);
 }
 
 void ib_send_rdma_write_response(unsigned char *buffer, int buflen)
 {
-	// Input
-	struct ib_base_transport_header *bth_in;
-	struct ib_rdma_extended_transport_header *reth_in;
-
-	// Output
-	struct ib_base_transport_header *bth_out;
-	struct ib_ack_extended_transport_header *aeth_out;
-
-	// Input
-	bth_in = (void *)&buffer[0];
-
-	// Output
-	bth_out = (void *)&data_out[0];
-	aeth_out = (void *)&data_out[sizeof(struct ib_base_transport_header)];
-
-	memset(data_out, 0, 16 + ICRC_SIZE);
-
-	// printf("ib_send_ack : opcode %x", 11);
-	bth_out->opcode = IBV_OPCODE_ACKNOWLEDGE;
-	bth_out->se__m__padcnt__tver = bth_in->se__m__padcnt__tver;
-	bth_out->pkey = bth_in->pkey;
-	bth_out->dest_qp = bth_in->dest_qp;
-	bth_out->ack__req = 0;
-	bth_out->ack__psn = bth_in->ack__psn;
-
-	aeth_out->Syndrome = 0x1F;
-	aeth_out->Message_Sequence_Number = 0x010000; // TODO correct
-
-	SendRoce(data_out, 16 + ICRC_SIZE);
+    ib_send_ack_with_opcode(buffer, buflen, IBV_OPCODE_ACKNOWLEDGE);
 }
 
 void ib_send_rdma_read_req(unsigned char *buffer, int buflen)
@@ -774,13 +699,7 @@ void ib_send_rdma_read_req(unsigned char *buffer, int buflen)
 
 	memset(data_out, 0, 28 + ICRC_SIZE);
 
-	// printf("ib_send_ack : opcode %x", 11);
-	bth_out->opcode = IBV_OPCODE_RC_RDMA_READ_REQUEST;
-	bth_out->se__m__padcnt__tver = 0;
-	bth_out->pkey = ntohs(0xFFFF);
-	bth_out->dest_qp = local_qpn << 8;
-	bth_out->ack__req = 0x80;
-	bth_out->ack__psn = htonl(starting_psn << 8);
+	insert_base_transport_header(bth_out, IBV_OPCODE_RC_RDMA_READ_REQUEST, 0x80);
 #ifdef DEBUG
 	printf("psn %x, %d\n", starting_psn, starting_psn);
 #endif
@@ -845,9 +764,7 @@ void udp_header(unsigned char *buffer, int buflen)
 		{
 		case IBV_OPCODE_UC_SEND_ONLY:
 			printf("IBV_OPCODE_UC_SEND_ONLY\n");
-			// ib_extended_transport_header(buffer, buflen);
-			// ib_mad_header(buffer, buflen);
-			// break;
+			break;
 		case IBV_OPCODE_UD_SEND_ONLY:
 			printf("IBV_OPCODE_UD_SEND_ONLY\n");
 			ib_extended_transport_header(buffer, buflen);
@@ -862,8 +779,6 @@ void udp_header(unsigned char *buffer, int buflen)
 
 		case IBV_OPCODE_RD_RDMA_READ_RESPONSE_ONLY:
 			printf("IBV_OPCODE_RD_RDMA_READ_RESPONSE_ONLY\n");
-			// ib_rc_rdma_read_response_only(&buffer[42], buflen);
-			// rdma_send = 1;
 			break;
 
 		case IBV_OPCODE_RC_RDMA_READ_RESPONSE_FIRST:
@@ -1133,7 +1048,7 @@ int main(int argc, char **argv)
 	}
 
 	initCrc();
-	DummySocket(RDMA_PORT); // Prevent ICMP messages
+	// DummySocket(RDMA_PORT); // Prevent ICMP messages
 	raw_socket();
 
 	printf("Closing log file\n");
