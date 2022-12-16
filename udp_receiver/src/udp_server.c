@@ -1048,7 +1048,7 @@ int main(int argc, char **argv)
 	}
 
 	initCrc();
-	// DummySocket(RDMA_PORT); // Prevent ICMP messages
+	DummySocket(RDMA_PORT); // Prevent ICMP messages
 	raw_socket();
 
 	printf("Closing log file\n");
