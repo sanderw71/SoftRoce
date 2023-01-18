@@ -605,7 +605,6 @@ int ib_rdma_write_last(unsigned char *buffer, int buflen, uint32_t key, uint64_t
 
 void ib_rdma_write_only(unsigned char *buffer, int buflen, uint32_t key, uint64_t addr, uint32_t len)
 {
-	printf("rdma_write_only len = %d \n", buflen);
 
 	if (len > 1024)
 	{
@@ -617,6 +616,8 @@ void ib_rdma_write_only(unsigned char *buffer, int buflen, uint32_t key, uint64_
 		ib_rdma_write_last(&buffer[tx_len], buflen - tx_len, key, addr, len);
 		return;
 	}
+
+	printf("rdma_write_only len = %d \n", buflen);
 
 	struct ib_rdma_write_only
 	{
