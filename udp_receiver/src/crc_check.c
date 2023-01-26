@@ -62,8 +62,6 @@ char rc_send_only[] = {
     0x56, 0x85
 };
 
-//cm_t cm;
-//p_cm_t p_cm = &cm;
 
 uint32_t be32_to_le32(uint32_t value) 
 {
@@ -73,32 +71,29 @@ uint32_t be32_to_le32(uint32_t value)
            ((value  << 24)  &0xff000000)); // byte 0 to byte 3
 }
 
+void initCrc(void);
+
+int CheckIcrc(unsigned char *buffer, int buflen)
+{
+	uint32_t icrc = calc_icrc32(buffer, buflen);
+	uint32_t *ptr = (uint32_t *)&buffer[buflen - 4];
+	printf("CheckIcrc %x = %x\n", *ptr, icrc);
+	return (*ptr == icrc);
+}
 
 
 int Crc_Checking(void)
 {
   uint32_t icrc1,icrc2;
 
-  icrc1 = calc_icrc32(connect_request, sizeof(connect_request)-4);
-  icrc2 = calc_icrc32(connect_request, sizeof(connect_request)-4);
-  if (icrc1 != icrc2) {
-    printf("Crc checking error");
-    exit(0);
-  }
+  initCrc();
+
+  CheckIcrc(connect_request,sizeof(connect_request));
+
 }
 
-// void initCrc(void)
-// {
-//   memset(p_cm, 0, sizeof(cm));
-
-//   p_cm->cm_width = 32;
-//   p_cm->cm_poly = 0x04C11DB7;
-//   p_cm->cm_init = 0xFFFFFFFF;
-//   p_cm->cm_refin = 1;
-//   p_cm->cm_refot = 1;
-//   p_cm->cm_xorot = 0xFFFFFFFF;
-//   cm_ini(p_cm);
-
-//   Crc_Checking();
-// }
+int main(void)
+{
+  Crc_Checking();
+}
 
