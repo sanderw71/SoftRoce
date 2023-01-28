@@ -18,5 +18,15 @@
   "directory": "/home/sander/SoftRoce/build",
   "command": "/usr/bin/gcc  -I/home/sander/SoftRoce/udp_receiver/src -I/home/atr/local/include -g -g -o CMakeFiles/udp_server.dir/src/crc32.c.o -c /home/sander/SoftRoce/udp_receiver/src/crc32.c",
   "file": "/home/sander/SoftRoce/udp_receiver/src/crc32.c"
+},
+{
+  "directory": "/home/sander/SoftRoce/build",
+  "command": "/usr/bin/gcc  -I/home/sander/SoftRoce/udp_receiver/src -I/home/atr/local/include -g -g -o CMakeFiles/crc_check.dir/src/crc32.c.o -c /home/sander/SoftRoce/udp_receiver/src/crc32.c",
+  "file": "/home/sander/SoftRoce/udp_receiver/src/crc32.c"
+},
+{
+  "directory": "/home/sander/SoftRoce/build",
+  "command": "/usr/bin/gcc  -I/home/sander/SoftRoce/udp_receiver/src -I/home/atr/local/include -g -g -o CMakeFiles/crc_check.dir/src/crc_check.c.o -c /home/sander/SoftRoce/udp_receiver/src/crc_check.c",
+  "file": "/home/sander/SoftRoce/udp_receiver/src/crc_check.c"
 }
 ]

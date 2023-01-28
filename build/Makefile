@@ -142,12 +142,26 @@ udp_server/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/udp_server.dir/build.make CMakeFiles/udp_server.dir/build
 .PHONY : udp_server/fast
 
+#=============================================================================
+# Target rules for targets named crc_check
+
+# Build rule for target.
+crc_check: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 crc_check
+.PHONY : crc_check
+
+# fast build rule for target.
+crc_check/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/crc_check.dir/build.make CMakeFiles/crc_check.dir/build
+.PHONY : crc_check/fast
+
 src/crc32.o: src/crc32.c.o
 .PHONY : src/crc32.o
 
 # target to build an object file
 src/crc32.c.o:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/udp_server.dir/build.make CMakeFiles/udp_server.dir/src/crc32.c.o
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/crc_check.dir/build.make CMakeFiles/crc_check.dir/src/crc32.c.o
 .PHONY : src/crc32.c.o
 
 src/crc32.i: src/crc32.c.i
@@ -156,6 +170,7 @@ src/crc32.i: src/crc32.c.i
 # target to preprocess a source file
 src/crc32.c.i:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/udp_server.dir/build.make CMakeFiles/udp_server.dir/src/crc32.c.i
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/crc_check.dir/build.make CMakeFiles/crc_check.dir/src/crc32.c.i
 .PHONY : src/crc32.c.i
 
 src/crc32.s: src/crc32.c.s
@@ -164,7 +179,32 @@ src/crc32.s: src/crc32.c.s
 # target to generate assembly for a file
 src/crc32.c.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/udp_server.dir/build.make CMakeFiles/udp_server.dir/src/crc32.c.s
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/crc_check.dir/build.make CMakeFiles/crc_check.dir/src/crc32.c.s
 .PHONY : src/crc32.c.s
+
+src/crc_check.o: src/crc_check.c.o
+.PHONY : src/crc_check.o
+
+# target to build an object file
+src/crc_check.c.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/crc_check.dir/build.make CMakeFiles/crc_check.dir/src/crc_check.c.o
+.PHONY : src/crc_check.c.o
+
+src/crc_check.i: src/crc_check.c.i
+.PHONY : src/crc_check.i
+
+# target to preprocess a source file
+src/crc_check.c.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/crc_check.dir/build.make CMakeFiles/crc_check.dir/src/crc_check.c.i
+.PHONY : src/crc_check.c.i
+
+src/crc_check.s: src/crc_check.c.s
+.PHONY : src/crc_check.s
+
+# target to generate assembly for a file
+src/crc_check.c.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/crc_check.dir/build.make CMakeFiles/crc_check.dir/src/crc_check.c.s
+.PHONY : src/crc_check.c.s
 
 src/net_utils.o: src/net_utils.c.o
 .PHONY : src/net_utils.o
@@ -246,11 +286,15 @@ help:
 	@echo "... depend"
 	@echo "... edit_cache"
 	@echo "... rebuild_cache"
+	@echo "... crc_check"
 	@echo "... udp_client"
 	@echo "... udp_server"
 	@echo "... src/crc32.o"
 	@echo "... src/crc32.i"
 	@echo "... src/crc32.s"
+	@echo "... src/crc_check.o"
+	@echo "... src/crc_check.i"
+	@echo "... src/crc_check.s"
 	@echo "... src/net_utils.o"
 	@echo "... src/net_utils.i"
 	@echo "... src/net_utils.s"

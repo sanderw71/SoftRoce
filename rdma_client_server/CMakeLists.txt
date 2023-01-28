@@ -1,8 +1,9 @@
-# Author : Animesh Trivedi
+# To install ib verbs:
+# sudo apt-get install libibverbs1 libibverbs-dev librdmacm1  librdmacm-dev rdmacm-utils ibverbs-utils
 
-cmake_minimum_required (VERSION 2.6)
+cmake_minimum_required (VERSION 3.4)
 
-project (rdma-example)
+project (rdma-frame)
 
 set(PROJECT_SOURCE_DIR ${CMAKE_SOURCE_DIR}/src)
 set(CMAKE_BINARY_DIR ${CMAKE_SOURCE_DIR}/bin)
@@ -29,8 +30,6 @@ link_libraries(pthread ${IBVERBS_LIBRARY} ${RDMACM_LIBRARY})
 
 include_directories("${PROJECT_SOURCE_DIR}" "/home/atr/local/include/")
 
-add_executable(rdma_server ${PROJECT_SOURCE_DIR}/rdma_common.c ${PROJECT_SOURCE_DIR}/rdma_server.c)
-add_executable(rdma_client ${PROJECT_SOURCE_DIR}/rdma_common.c ${PROJECT_SOURCE_DIR}/rdma_client.c)
 add_executable(rdma_server_frame ${PROJECT_SOURCE_DIR}/rdma_common.c ${PROJECT_SOURCE_DIR}/rdma_server_frame.c)
 add_executable(rdma_client_frame ${PROJECT_SOURCE_DIR}/rdma_common.c ${PROJECT_SOURCE_DIR}/rdma_client_frame.c)
 
